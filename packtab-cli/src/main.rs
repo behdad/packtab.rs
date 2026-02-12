@@ -35,6 +35,10 @@ struct Cli {
     #[arg(long)]
     optimize_size: bool,
 
+    /// Show compression statistics instead of generating code.
+    #[arg(long)]
+    analyze: bool,
+
     /// Namespace prefix for generated symbols.
     #[arg(long, default_value = "data")]
     name: String,
@@ -80,14 +84,6 @@ fn main() {
         std::process::exit(1);
     }
 
-    let language_str = if cli.rust { "rust" } else { &cli.language };
-    let lang = match language_str {
-        "rust" => Language::Rust {
-            unsafe_access: cli.unsafe_access,
-        },
-        _ => Language::C,
-    };
-
     // Handle --optimize-size shortcut
     let compression_str = if cli.optimize_size { "9" } else { &cli.compression };
 
@@ -100,6 +96,20 @@ fn main() {
             eprintln!("Error: invalid compression value: {}", e);
             std::process::exit(1);
         });
+
+    // Handle --analyze flag
+    if cli.analyze {
+        print_analysis(&data, cli.default, compression_values[0]);
+        return;
+    }
+
+    let language_str = if cli.rust { "rust" } else { &cli.language };
+    let lang = match language_str {
+        "rust" => Language::Rust {
+            unsafe_access: cli.unsafe_access,
+        },
+        _ => Language::C,
+    };
 
     // Validate dual-compression (C-only for now)
     if compression_values.len() > 1 {
@@ -148,4 +158,74 @@ fn parse_data(content: &str) -> Vec<i64> {
         .split_whitespace()
         .filter_map(|s| s.parse::<i64>().ok())
         .collect()
+}
+
+fn print_analysis(data: &[i64], default: i64, compression: f64) {
+    use packtab::util::binary_bits_for;
+
+    let info = packtab::pack_table_all(data, default);
+
+    let original_size = data.len();
+    let min_v = *data.iter().min().unwrap_or(&0);
+    let max_v = *data.iter().max().unwrap_or(&0);
+    let bits_needed = binary_bits_for(min_v, max_v);
+    let original_bytes = original_size * std::cmp::max(1, (bits_needed as usize + 7) / 8);
+
+    println!("Compression Analysis");
+    println!("{}", "=".repeat(70));
+    println!("Original data: {} values, range [{}..{}]", original_size, min_v, max_v);
+    println!(
+        "Original storage: {} bits/value, {} bytes total",
+        bits_needed, original_bytes
+    );
+    println!("Default value: {}", default);
+    println!();
+    println!("Found {} Pareto-optimal solutions:", info.solutions.len());
+    println!();
+    println!(
+        "{:<3} {:<8} {:<9} {:<6} {:<8} {:<7} {:<8}",
+        "#", "Lookups", "ExtraOps", "Bytes", "FullCost", "Ratio", "Score"
+    );
+    println!("{}", "-".repeat(70));
+
+    for (i, sol) in info.solutions.iter().enumerate() {
+        let ratio = if sol.cost > 0 {
+            original_bytes as f64 / sol.cost as f64
+        } else {
+            f64::INFINITY
+        };
+        let full_cost = sol.full_cost();
+        let score = if full_cost > 0 {
+            sol.n_lookups as f64 + compression * ((full_cost as u64).ilog2() as f64)
+        } else {
+            sol.n_lookups as f64 - compression
+        };
+        println!(
+            "{:<3} {:<8} {:<9} {:<6} {:<8} {:>6.2}x {:>7.1}",
+            i + 1,
+            sol.n_lookups,
+            sol.n_extra_ops,
+            sol.cost,
+            full_cost,
+            ratio,
+            score
+        );
+    }
+
+    println!();
+    let chosen_idx = packtab::pick_solution(&info.solutions, compression);
+    let chosen = &info.solutions[chosen_idx];
+    println!("Best solution for compression={}: #{}", compression, chosen_idx + 1);
+    println!(
+        "  {} lookups, {} extra ops, {} bytes",
+        chosen.n_lookups, chosen.n_extra_ops, chosen.cost
+    );
+    if chosen.cost > 0 {
+        println!(
+            "  Compression ratio: {:.2}x",
+            original_bytes as f64 / chosen.cost as f64
+        );
+    } else {
+        println!("  Compression ratio: ∞ (computed inline, no storage)");
+    }
 }
