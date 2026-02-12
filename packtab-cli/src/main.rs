@@ -6,9 +6,10 @@ use std::io::{self, Read};
 #[derive(Parser)]
 #[command(name = "packtab", about = "Pack a list of integers into compact lookup tables.")]
 struct Cli {
-    /// Integer data values to pack (reads from stdin if not provided).
+    /// Integer data values to pack, or index:value pairs with --sparse
+    /// (reads from stdin if not provided).
     #[arg(required = false)]
-    data: Vec<i64>,
+    data: Vec<String>,
 
     /// Output language.
     #[arg(long, value_parser = ["c", "rust"], default_value = "c")]
@@ -39,6 +40,10 @@ struct Cli {
     #[arg(long)]
     analyze: bool,
 
+    /// Treat data as sparse: 'index:value' pairs (requires --default).
+    #[arg(long)]
+    sparse: bool,
+
     /// Namespace prefix for generated symbols.
     #[arg(long, default_value = "data")]
     name: String,
@@ -55,20 +60,16 @@ struct Cli {
 fn main() {
     let cli = Cli::parse();
 
-    // Read data from input file, positional args, or stdin
-    let data = if let Some(input_file) = &cli.input {
-        // Read from input file
-        let content = fs::read_to_string(input_file)
+    // Read and parse data from input file, positional args, or stdin
+    let content = if let Some(input_file) = &cli.input {
+        fs::read_to_string(input_file)
             .unwrap_or_else(|e| {
                 eprintln!("Error reading input file '{}': {}", input_file, e);
                 std::process::exit(1);
-            });
-        parse_data(&content)
+            })
     } else if !cli.data.is_empty() {
-        // Use positional args
-        cli.data.clone()
+        cli.data.join(" ")
     } else {
-        // Read from stdin
         let mut buffer = String::new();
         io::stdin()
             .read_to_string(&mut buffer)
@@ -76,7 +77,17 @@ fn main() {
                 eprintln!("Error reading from stdin: {}", e);
                 std::process::exit(1);
             });
-        parse_data(&buffer)
+        buffer
+    };
+
+    let data = if cli.sparse {
+        parse_sparse_data(&content, cli.default)
+            .unwrap_or_else(|e| {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
+            })
+    } else {
+        parse_data(&content)
     };
 
     if data.is_empty() {
@@ -158,6 +169,44 @@ fn parse_data(content: &str) -> Vec<i64> {
         .split_whitespace()
         .filter_map(|s| s.parse::<i64>().ok())
         .collect()
+}
+
+fn parse_sparse_data(content: &str, default: i64) -> Result<Vec<i64>, String> {
+    use std::collections::HashMap;
+
+    let mut sparse_map: HashMap<usize, i64> = HashMap::new();
+    let mut max_index = 0;
+
+    for item in content.split_whitespace() {
+        if !item.contains(':') {
+            return Err(format!("--sparse requires 'index:value' format, got: {}", item));
+        }
+
+        let parts: Vec<&str> = item.split(':').collect();
+        if parts.len() != 2 {
+            return Err(format!("invalid index:value pair: {}", item));
+        }
+
+        let index = parts[0].parse::<usize>()
+            .map_err(|_| format!("invalid index in pair: {}", item))?;
+        let value = parts[1].parse::<i64>()
+            .map_err(|_| format!("invalid value in pair: {}", item))?;
+
+        sparse_map.insert(index, value);
+        max_index = max_index.max(index);
+    }
+
+    if sparse_map.is_empty() {
+        return Err("no sparse data provided".to_string());
+    }
+
+    // Create dense array filled with default
+    let mut data = vec![default; max_index + 1];
+    for (index, value) in sparse_map {
+        data[index] = value;
+    }
+
+    Ok(data)
 }
 
 fn print_analysis(data: &[i64], default: i64, compression: f64) {
