@@ -30,6 +30,10 @@ struct Cli {
     #[arg(long, default_value = "1")]
     compression: f64,
 
+    /// Shortcut for --compression 9 (maximum size optimization).
+    #[arg(long)]
+    optimize_size: bool,
+
     /// Namespace prefix for generated symbols.
     #[arg(long, default_value = "data")]
     name: String,
@@ -83,7 +87,10 @@ fn main() {
         _ => Language::C,
     };
 
-    let (info, best) = packtab::pack_table(&data, cli.default, cli.compression);
+    // Handle --optimize-size shortcut
+    let compression = if cli.optimize_size { 9.0 } else { cli.compression };
+
+    let (info, best) = packtab::pack_table(&data, cli.default, compression);
     let code = packtab::generate(&info, best, &cli.name, lang);
 
     // Write to output file or stdout
