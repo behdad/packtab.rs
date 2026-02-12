@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 description = "Pack static integer tables into compact multi-level lookup tables"
 license = "Apache-2.0"
+repository = "https://github.com/behdad/packtab.rs"
 
 [dev-dependencies]
 tempfile = "3"

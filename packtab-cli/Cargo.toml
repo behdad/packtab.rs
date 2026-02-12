@@ -4,11 +4,12 @@ version = "0.1.0"
 edition = "2021"
 description = "CLI for packtab table packing"
 license = "Apache-2.0"
+repository = "https://github.com/behdad/packtab.rs"
 
 [[bin]]
 name = "packtab"
 path = "src/main.rs"
 
 [dependencies]
-packtab = { path = "../packtab" }
+packtab = { version = "0.1.0", path = "../packtab" }
 clap = { version = "4", features = ["derive"] }
