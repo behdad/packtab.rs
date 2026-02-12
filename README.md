@@ -88,6 +88,23 @@ packtab_macro::pack_table! {
 The macro expands at compile time into packed static arrays and an
 inline lookup function.
 
+### Options
+
+- **`default`** (required): Value returned for out-of-range indices.
+- **`compression`** (optional): Size vs speed tradeoff; higher = smaller tables. Default `1.0`.
+- **`unsafe`** (optional): When `true`, uses `get_unchecked` for array accesses. Default `false`.
+
+```rust
+packtab_macro::pack_table! {
+    pub fn lookup(u: usize) -> u8 {
+        data: [10, 20, 30, 40, 50, 60, 70, 80],
+        default: 0,
+        compression: 2.0,
+        unsafe: true,
+    }
+}
+```
+
 ## Algorithm
 
 The algorithm has two layers:
