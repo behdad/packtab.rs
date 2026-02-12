@@ -443,6 +443,7 @@ fn render_array(out: &mut String, arr: &ArrayDecl, lang: Language) {
             out.push_str(" =\n{\n");
         }
         Language::Rust { .. } => {
+            out.push_str("#[allow(dead_code, non_upper_case_globals)]\n");
             let linkage = if arr.private { "static" } else { "pub(crate) static" };
             let typ = rust_type_name(arr.typ);
             out.push_str(&format!("{} {}: [{}; {}]", linkage, arr.name, typ, arr.values.len()));
@@ -494,6 +495,7 @@ fn render_accessor(out: &mut String, acc: &AccessorDecl, lang: Language) {
             out.push_str("}\n");
         }
         Language::Rust { unsafe_access } => {
+            out.push_str("#[allow(dead_code, unused_parens)]\n");
             out.push_str(&format!(
                 "fn {} (a: &[u8], i: usize) -> u8\n",
                 acc.name
@@ -531,6 +533,7 @@ fn render_function(out: &mut String, func: &FuncDecl, lang: Language) {
             out.push_str("}\n");
         }
         Language::Rust { .. } => {
+            out.push_str("#[allow(dead_code, unused_parens)]\n");
             let linkage = if func.private { "" } else { "pub(crate) " };
             let typ = rust_type_name(func.ret_type);
             out.push_str(&format!(

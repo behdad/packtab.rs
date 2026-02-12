@@ -1,4 +1,3 @@
-#[allow(unused_parens, non_upper_case_globals)]
 mod test_macro {
     packtab_macro::pack_table! {
         fn lookup(u: usize) -> u8 {
@@ -26,7 +25,6 @@ mod test_macro {
     }
 }
 
-#[allow(unused_parens, non_upper_case_globals)]
 mod test_macro_large {
     packtab_macro::pack_table! {
         pub fn big_lookup(u: usize) -> u16 {

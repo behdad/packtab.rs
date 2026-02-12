@@ -167,7 +167,6 @@ pub fn pack_table(input: TokenStream) -> TokenStream {
         .unwrap_or_else(|e| panic!("Failed to parse generated code: {}\n\nCode:\n{}", e, adjusted));
 
     let output = quote! {
-        #[allow(dead_code, unused_parens, non_upper_case_globals)]
         #generated
     };
 
