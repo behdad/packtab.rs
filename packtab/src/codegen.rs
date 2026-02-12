@@ -22,7 +22,7 @@ struct CodeBuilder {
     namespace: String,
     arrays: Vec<(String, IntType, Vec<i64>)>,
     array_offsets: std::collections::HashMap<String, usize>,
-    functions: Vec<(String, IntType, String, String, bool)>,
+    functions: Vec<(String, IntType, String, String, bool, bool)>,
     function_set: std::collections::HashSet<String>,
     accessors: std::collections::HashSet<u8>,
 }
@@ -63,6 +63,7 @@ impl CodeBuilder {
         arg_name: &str,
         body: &str,
         private: bool,
+        inline_always: bool,
     ) -> String {
         let full_name = self.name_for(name);
         if !self.function_set.contains(&full_name) {
@@ -73,6 +74,7 @@ impl CodeBuilder {
                 arg_name.to_string(),
                 body.to_string(),
                 private,
+                inline_always,
             ));
         }
         full_name
@@ -92,15 +94,17 @@ impl CodeBuilder {
             ir.accessors.push(AccessorDecl {
                 name: self.namespace.clone() + "_b" + &bits.to_string(),
                 unit_bits: *bits,
+                inline_always: true,
             });
         }
-        for (name, ret_type, arg_name, body, private) in self.functions {
+        for (name, ret_type, arg_name, body, private, inline_always) in self.functions {
             ir.functions.push(FuncDecl {
                 name,
                 ret_type,
                 arg_name,
                 body,
                 private,
+                inline_always,
             });
         }
         ir
@@ -292,7 +296,7 @@ fn gen_inner_code(
             mask2,
         );
 
-        let func_name = code.add_function(IntType::U8, &format!("b{}", unit_bits), "i", &func_body, true);
+        let func_name = code.add_function(IntType::U8, &format!("b{}", unit_bits), "i", &func_body, true, true);
         code.accessors.insert(unit_bits);
 
         let start_str = if start > 0 {
@@ -380,7 +384,7 @@ fn gen_outer_code(
 
     // Wrap in a named function if requested.
     if let Some(name) = name {
-        let func_name = code_builder.add_function(ret_type, name, "u", &expr, private);
+        let func_name = code_builder.add_function(ret_type, name, "u", &expr, private, false);
         expr = format!("{}({})", func_name, input_var);
     }
 
@@ -496,6 +500,11 @@ fn render_accessor(out: &mut String, acc: &AccessorDecl, lang: Language) {
         }
         Language::Rust { unsafe_access } => {
             out.push_str("#[allow(dead_code, unused_parens)]\n");
+            if acc.inline_always {
+                out.push_str("#[inline(always)]\n");
+            } else {
+                out.push_str("#[inline]\n");
+            }
             out.push_str(&format!(
                 "fn {} (a: &[u8], i: usize) -> u8\n",
                 acc.name
@@ -534,6 +543,11 @@ fn render_function(out: &mut String, func: &FuncDecl, lang: Language) {
         }
         Language::Rust { .. } => {
             out.push_str("#[allow(dead_code, unused_parens)]\n");
+            if func.inline_always {
+                out.push_str("#[inline(always)]\n");
+            } else {
+                out.push_str("#[inline]\n");
+            }
             let linkage = if func.private { "" } else { "pub(crate) " };
             let typ = rust_type_name(func.ret_type);
             out.push_str(&format!(

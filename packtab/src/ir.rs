@@ -85,6 +85,7 @@ pub struct FuncDecl {
     pub arg_name: String,
     pub body: String,
     pub private: bool,
+    pub inline_always: bool,
 }
 
 /// Sub-byte accessor function declaration.
@@ -92,6 +93,7 @@ pub struct FuncDecl {
 pub struct AccessorDecl {
     pub name: String,
     pub unit_bits: u8,
+    pub inline_always: bool,
 }
 
 /// The complete generated code: arrays + functions.
