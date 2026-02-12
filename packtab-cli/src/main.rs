@@ -27,8 +27,9 @@ struct Cli {
     default: i64,
 
     /// Size vs speed tradeoff; higher = smaller tables.
+    /// For C: use '1,9' to generate both variants with #ifdef __OPTIMIZE_SIZE__.
     #[arg(long, default_value = "1")]
-    compression: f64,
+    compression: String,
 
     /// Shortcut for --compression 9 (maximum size optimization).
     #[arg(long)]
@@ -88,10 +89,47 @@ fn main() {
     };
 
     // Handle --optimize-size shortcut
-    let compression = if cli.optimize_size { 9.0 } else { cli.compression };
+    let compression_str = if cli.optimize_size { "9" } else { &cli.compression };
 
-    let (info, best) = packtab::pack_table(&data, cli.default, compression);
-    let code = packtab::generate(&info, best, &cli.name, lang);
+    // Parse compression value(s)
+    let compression_values: Vec<f64> = compression_str
+        .split(',')
+        .map(|s| s.trim().parse::<f64>())
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap_or_else(|e| {
+            eprintln!("Error: invalid compression value: {}", e);
+            std::process::exit(1);
+        });
+
+    // Validate dual-compression (C-only for now)
+    if compression_values.len() > 1 {
+        if compression_values.len() != 2 {
+            eprintln!("Error: compression can have at most 2 values (e.g., '1,9')");
+            std::process::exit(1);
+        }
+        if language_str != "c" {
+            eprintln!("Error: dual compression (e.g., '1,9') is only supported for C output");
+            std::process::exit(1);
+        }
+    }
+
+    let code = if compression_values.len() == 1 {
+        // Single compression - generate normally
+        let (info, best) = packtab::pack_table(&data, cli.default, compression_values[0]);
+        packtab::generate(&info, best, &cli.name, lang)
+    } else {
+        // Dual compression - generate both with #ifdef
+        let (info_speed, best_speed) = packtab::pack_table(&data, cli.default, compression_values[0]);
+        let code_speed = packtab::generate(&info_speed, best_speed, &cli.name, lang);
+
+        let (info_size, best_size) = packtab::pack_table(&data, cli.default, compression_values[1]);
+        let code_size = packtab::generate(&info_size, best_size, &cli.name, lang);
+
+        format!(
+            "#ifdef __OPTIMIZE_SIZE__\n\n{}\n\n#else  /* optimize for speed */\n\n{}\n\n#endif\n",
+            code_size, code_speed
+        )
+    };
 
     // Write to output file or stdout
     if let Some(output_file) = &cli.output {
