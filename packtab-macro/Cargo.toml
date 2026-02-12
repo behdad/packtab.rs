@@ -1,0 +1,15 @@
+[package]
+name = "packtab-macro"
+version = "0.1.0"
+edition = "2021"
+description = "Proc-macro for packtab compile-time table generation"
+license = "Apache-2.0"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+packtab = { path = "../packtab" }
+syn = { version = "2", features = ["full"] }
+quote = "1"
+proc-macro2 = "1"

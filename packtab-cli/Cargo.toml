@@ -1,0 +1,10 @@
+[package]
+name = "packtab-cli"
+version = "0.1.0"
+edition = "2021"
+description = "CLI for packtab table packing"
+license = "Apache-2.0"
+
+[dependencies]
+packtab = { path = "../packtab" }
+clap = { version = "4", features = ["derive"] }
