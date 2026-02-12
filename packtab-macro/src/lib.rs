@@ -23,6 +23,7 @@ struct PackTableInput {
     data: Vec<i64>,
     default: i64,
     compression: f64,
+    unsafe_access: bool,
 }
 
 impl Parse for PackTableInput {
@@ -83,27 +84,36 @@ impl Parse for PackTableInput {
             lit.base10_parse::<i64>()?
         };
 
-        // Optional: compression: F
+        // Optional trailing fields: compression, unsafe
         let mut compression = 1.0f64;
-        if brace_content.peek(Token![,]) {
+        let mut unsafe_access = false;
+        while brace_content.peek(Token![,]) {
             brace_content.parse::<Token![,]>()?;
-            if !brace_content.is_empty() {
-                let comp_ident: Ident = brace_content.parse()?;
-                if comp_ident != "compression" {
-                    return Err(syn::Error::new_spanned(comp_ident, "expected 'compression'"));
-                }
+            if brace_content.is_empty() {
+                break;
+            }
+            if brace_content.peek(Token![unsafe]) {
+                let kw: Token![unsafe] = brace_content.parse()?;
                 brace_content.parse::<Token![:]>()?;
-                let expr: Expr = brace_content.parse()?;
-                compression = match &expr {
-                    Expr::Lit(lit) => match &lit.lit {
-                        syn::Lit::Float(f) => f.base10_parse::<f64>()?,
-                        syn::Lit::Int(i) => i.base10_parse::<f64>()?,
-                        _ => return Err(syn::Error::new_spanned(lit, "expected number")),
-                    },
-                    _ => return Err(syn::Error::new_spanned(expr, "expected number literal")),
-                };
-                if brace_content.peek(Token![,]) {
-                    brace_content.parse::<Token![,]>()?;
+                let lit: syn::LitBool = brace_content.parse()
+                    .map_err(|_| syn::Error::new_spanned(kw, "expected bool after 'unsafe:'"))?;
+                unsafe_access = lit.value;
+            } else {
+                let ident: Ident = brace_content.parse()?;
+                match ident.to_string().as_str() {
+                    "compression" => {
+                        brace_content.parse::<Token![:]>()?;
+                        let expr: Expr = brace_content.parse()?;
+                        compression = match &expr {
+                            Expr::Lit(lit) => match &lit.lit {
+                                syn::Lit::Float(f) => f.base10_parse::<f64>()?,
+                                syn::Lit::Int(i) => i.base10_parse::<f64>()?,
+                                _ => return Err(syn::Error::new_spanned(lit, "expected number")),
+                            },
+                            _ => return Err(syn::Error::new_spanned(expr, "expected number literal")),
+                        };
+                    }
+                    _ => return Err(syn::Error::new_spanned(ident, "expected 'compression' or 'unsafe'")),
                 }
             }
         }
@@ -116,6 +126,7 @@ impl Parse for PackTableInput {
             data,
             default,
             compression,
+            unsafe_access,
         })
     }
 }
@@ -141,7 +152,7 @@ pub fn pack_table(input: TokenStream) -> TokenStream {
         &info,
         best_idx,
         &input.fn_name.to_string(),
-        packtab::codegen::Language::Rust { unsafe_access: false },
+        packtab::codegen::Language::Rust { unsafe_access: input.unsafe_access },
     );
 
     // Adjust visibility: replace "pub(crate) fn name_get" with user's visibility + name.

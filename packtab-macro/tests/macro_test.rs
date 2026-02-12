@@ -42,3 +42,26 @@ mod test_macro_large {
         assert_eq!(big_lookup(16), 0);
     }
 }
+
+mod test_macro_unsafe {
+    packtab_macro::pack_table! {
+        fn lookup_unsafe(u: usize) -> u8 {
+            data: [10, 20, 30, 40, 50, 60, 70, 80],
+            default: 0,
+            unsafe: true,
+        }
+    }
+
+    #[test]
+    fn test_unsafe_lookup_values() {
+        assert_eq!(lookup_unsafe(0), 10);
+        assert_eq!(lookup_unsafe(1), 20);
+        assert_eq!(lookup_unsafe(7), 80);
+    }
+
+    #[test]
+    fn test_unsafe_lookup_default() {
+        assert_eq!(lookup_unsafe(8), 0);
+        assert_eq!(lookup_unsafe(100), 0);
+    }
+}

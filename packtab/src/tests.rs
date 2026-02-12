@@ -155,6 +155,18 @@ macro_rules! e2e_test {
                     Language::Rust { unsafe_access: false },
                 );
             }
+
+            #[test]
+            fn rust_unsafe() {
+                let data: Vec<i64> = $data;
+                let code = gen(&data, $default, Language::Rust { unsafe_access: true });
+                compile_and_run(
+                    &code,
+                    &data,
+                    $default,
+                    Language::Rust { unsafe_access: true },
+                );
+            }
         }
     };
 }
