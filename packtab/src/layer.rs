@@ -68,12 +68,42 @@ impl InnerLayerChain {
                 cur.data.push(0);
             }
 
+            // Collect pairs with frequencies and first occurrence positions
+            use std::collections::HashMap;
+            let pairs: Vec<(usize, usize)> = cur.data
+                .chunks(2)
+                .map(|pair| (pair[0] as usize, pair[1] as usize))
+                .collect();
+
+            let mut pair_freq: HashMap<(usize, usize), usize> = HashMap::new();
+            let mut first_occurrence: HashMap<(usize, usize), usize> = HashMap::new();
+
+            for (i, &pair) in pairs.iter().enumerate() {
+                *pair_freq.entry(pair).or_insert(0) += 1;
+                first_occurrence.entry(pair).or_insert(i);
+            }
+
+            // Sort unique pairs by frequency (descending), then position (ascending)
+            let mut unique_pairs: Vec<(usize, usize)> = pair_freq.keys().copied().collect();
+            unique_pairs.sort_by(|a, b| {
+                let freq_cmp = pair_freq[b].cmp(&pair_freq[a]);
+                if freq_cmp == std::cmp::Ordering::Equal {
+                    first_occurrence[a].cmp(&first_occurrence[b])
+                } else {
+                    freq_cmp
+                }
+            });
+
+            // Create mapping with IDs assigned in sorted order
             let mut mapping = AutoMapping::new();
-            let mut data2 = Vec::with_capacity(cur.data.len() / 2);
-            for pair in cur.data.chunks(2) {
-                let a = pair[0] as usize;
-                let b = pair[1] as usize;
-                let id = mapping.get_or_insert((a, b));
+            for pair in unique_pairs {
+                mapping.get_or_insert(pair); // Assigns next sequential ID
+            }
+
+            // Apply mapping to create child layer data
+            let mut data2 = Vec::with_capacity(pairs.len());
+            for pair in pairs {
+                let id = mapping.get_or_insert(pair);
                 data2.push(id as i64);
             }
             cur.mapping = Some(mapping);

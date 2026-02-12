@@ -1,5 +1,5 @@
 use crate::codegen::Language;
-use crate::layer::OuterLayerInfo;
+use crate::layer::{InnerLayerChain, OuterLayerInfo};
 use crate::{generate, pack_table, pack_table_all, pick_solution};
 use std::process::Command;
 
@@ -367,4 +367,71 @@ fn test_identity_with_offset() {
     let data: Vec<i64> = (0..8).map(|i| 100 + i).collect();
     let info = OuterLayerInfo::new(&data, 0);
     assert!(info.identity);
+}
+
+// ── Cache optimization tests ────────────────────────────────────────
+
+#[test]
+fn test_frequent_pairs_get_lower_ids() {
+    // Pattern: (1,2) appears 3 times, (3,4) appears 2 times, (5,6) appears 1 time
+    let data = vec![1, 2, 1, 2, 1, 2, 3, 4, 3, 4, 5, 6];
+    let chain = InnerLayerChain::new(data);
+
+    // Get the first inner layer which has the mapping
+    let layer = &chain.layers[0];
+    let mapping = layer.mapping.as_ref().expect("Layer should have a mapping");
+
+    let id_12 = mapping.get((1, 2)).expect("Pair (1,2) should exist");
+    let id_34 = mapping.get((3, 4)).expect("Pair (3,4) should exist");
+    let id_56 = mapping.get((5, 6)).expect("Pair (5,6) should exist");
+
+    // (1,2) most frequent -> lowest ID
+    // (3,4) second -> middle ID
+    // (5,6) least frequent -> highest ID
+    assert!(id_12 < id_34);
+    assert!(id_34 < id_56);
+}
+
+#[test]
+fn test_equal_frequency_sorted_by_position() {
+    // All pairs appear once, so order by position
+    let data = vec![1, 2, 3, 4, 5, 6, 7, 8];
+    let chain = InnerLayerChain::new(data);
+
+    let layer = &chain.layers[0];
+    let mapping = layer.mapping.as_ref().expect("Layer should have a mapping");
+
+    let id_12 = mapping.get((1, 2)).expect("Pair (1,2) should exist");
+    let id_34 = mapping.get((3, 4)).expect("Pair (3,4) should exist");
+    let id_56 = mapping.get((5, 6)).expect("Pair (5,6) should exist");
+    let id_78 = mapping.get((7, 8)).expect("Pair (7,8) should exist");
+
+    // All have frequency 1, so order by position
+    assert!(id_12 < id_34);
+    assert!(id_34 < id_56);
+    assert!(id_56 < id_78);
+}
+
+#[test]
+fn test_mixed_frequency_and_position() {
+    // (1,2) appears 2 times at positions 0,2
+    // (3,4) appears 2 times at positions 1,3
+    // (5,6) appears 1 time at position 4
+    let data = vec![1, 2, 3, 4, 1, 2, 3, 4, 5, 6];
+    let chain = InnerLayerChain::new(data);
+
+    let layer = &chain.layers[0];
+    let mapping = layer.mapping.as_ref().expect("Layer should have a mapping");
+
+    let id_12 = mapping.get((1, 2)).expect("Pair (1,2) should exist");
+    let id_34 = mapping.get((3, 4)).expect("Pair (3,4) should exist");
+    let id_56 = mapping.get((5, 6)).expect("Pair (5,6) should exist");
+
+    // (1,2) and (3,4) both appear twice, so sorted by position
+    // (1,2) appears first (position 0) -> lower ID than (3,4) (position 1)
+    assert!(id_12 < id_34);
+
+    // (5,6) appears once -> highest ID
+    assert!(id_56 > id_12);
+    assert!(id_56 > id_34);
 }

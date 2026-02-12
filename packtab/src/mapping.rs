@@ -30,6 +30,11 @@ impl AutoMapping {
         id
     }
 
+    /// Look up the ID for a given pair (read-only).
+    pub fn get(&self, key: (usize, usize)) -> Option<usize> {
+        self.key_to_id.get(&key).copied()
+    }
+
     /// Look up the pair for a given ID.
     pub fn get_pair(&self, id: usize) -> (usize, usize) {
         self.id_to_key[id]
