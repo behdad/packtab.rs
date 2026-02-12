@@ -34,15 +34,23 @@ Generated code can target **C** or **Rust**.
 
 ## CLI Usage
 
+### Installation
+
+```sh
+cargo install packtab-cli
+```
+
+### Examples
+
 ```sh
 # Generate C code
-cargo run -p packtab-cli -- 1 2 3 4 5 6 7 8
+packtab 1 2 3 4 5 6 7 8
 
 # Generate Rust code
-cargo run -p packtab-cli -- --rust 1 2 3 4 5 6 7 8
+packtab --rust 1 2 3 4 5 6 7 8
 
 # With options
-cargo run -p packtab-cli -- --language rust --unsafe --name my_table --default 0 --compression 2.0 \
+packtab --language rust --unsafe --name my_table --default 0 --compression 2.0 \
     0 128 256 384
 ```
 
@@ -63,6 +71,15 @@ Options:
 
 ## Library Usage
 
+Add to your `Cargo.toml`:
+
+```toml
+[dependencies]
+packtab = "0.1.0"
+```
+
+Example:
+
 ```rust
 use packtab::codegen::Language;
 
@@ -73,6 +90,15 @@ println!("{}", code);
 ```
 
 ## Proc-Macro Usage
+
+Add to your `Cargo.toml`:
+
+```toml
+[dependencies]
+packtab-macro = "0.1.0"
+```
+
+Example:
 
 ```rust
 packtab_macro::pack_table! {
