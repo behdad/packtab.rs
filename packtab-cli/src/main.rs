@@ -37,6 +37,10 @@ struct Cli {
     /// Read data from FILE (default: positional args or stdin).
     #[arg(short = 'i', long = "input")]
     input: Option<String>,
+
+    /// Write output to FILE instead of stdout.
+    #[arg(short = 'o', long = "output")]
+    output: Option<String>,
 }
 
 fn main() {
@@ -81,7 +85,17 @@ fn main() {
 
     let (info, best) = packtab::pack_table(&data, cli.default, cli.compression);
     let code = packtab::generate(&info, best, &cli.name, lang);
-    print!("{}", code);
+
+    // Write to output file or stdout
+    if let Some(output_file) = &cli.output {
+        fs::write(output_file, &code)
+            .unwrap_or_else(|e| {
+                eprintln!("Error writing to output file '{}': {}", output_file, e);
+                std::process::exit(1);
+            });
+    } else {
+        print!("{}", code);
+    }
 }
 
 fn parse_data(content: &str) -> Vec<i64> {
