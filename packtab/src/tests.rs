@@ -325,25 +325,27 @@ fn test_mult_no_bake_in_has_mult_in_code() {
 
 #[test]
 fn test_bias_bake_in_small() {
-    let info = OuterLayerInfo::new(&[100, 101, 102, 103], 0);
+    // Use non-linear data so identity optimization doesn't interfere
+    let info = OuterLayerInfo::new(&[100, 105, 110, 115], 0);
     assert_eq!(info.bias, 0);
 }
 
 #[test]
 fn test_bias_no_bake_in_type_change() {
-    let info = OuterLayerInfo::new(&[1000, 1001, 1002, 1003], 0);
+    let info = OuterLayerInfo::new(&[1000, 1005, 1010, 1015], 0);
     assert_eq!(info.bias, 1000);
 }
 
 #[test]
 fn test_bias_bake_in_no_bias_in_code() {
-    let code = gen(&[200, 201, 202, 203], 0, Language::C);
+    // Use non-linear data so identity optimization doesn't interfere
+    let code = gen(&[200, 205, 210, 215], 0, Language::C);
     assert!(!code.contains("200+"), "Bias should be baked in");
 }
 
 #[test]
 fn test_bias_no_bake_in_has_bias_in_code() {
-    let code = gen(&[1000, 1003, 1001, 1002], 0, Language::C);
+    let code = gen(&[1000, 1005, 1010, 1015], 0, Language::C);
     assert!(code.contains("1000+"), "Bias should be in generated code");
 }
 
@@ -434,4 +436,83 @@ fn test_mixed_frequency_and_position() {
     // (5,6) appears once -> highest ID
     assert!(id_56 > id_12);
     assert!(id_56 > id_34);
+}
+
+// ── Edge cases and boundary conditions ────────────────────────────
+
+#[test]
+fn test_single_value() {
+    // Single value should work
+    let data = vec![42];
+    let (info, best) = pack_table(&data, 0, 1.0);
+    let code = generate(&info, best, "data", Language::C);
+    assert!(!code.is_empty());
+}
+
+#[test]
+fn test_all_same_values() {
+    // All identical values should optimize well
+    let data = vec![7; 100];
+    let (info, best) = pack_table(&data, 0, 1.0);
+    let solution = &info.solutions[best];
+    // Should recognize constant data
+    assert_eq!(solution.cost, 0); // Inlined
+}
+
+#[test]
+fn test_negative_numbers() {
+    // Negative numbers should work
+    let data = vec![-5, -3, -1, 0, 1, 3, 5];
+    let (info, best) = pack_table(&data, 0, 1.0);
+    let code = generate(&info, best, "data", Language::C);
+    compile_and_run(&code, &data, 0, Language::C);
+}
+
+#[test]
+fn test_large_sparse_table() {
+    // Sparse table with large indices
+    let mut data = vec![0; 10001];
+    data[0] = 1;
+    data[1000] = 2;
+    data[10000] = 3;
+    let (info, _best) = pack_table(&data, 0, 1.0);
+    assert!(!info.solutions.is_empty());
+    // Should compress well due to sparsity
+}
+
+#[test]
+fn test_u8_boundary() {
+    // Test values at u8 boundary (255)
+    let data = vec![0, 127, 255];
+    let (info, best) = pack_table(&data, 0, 1.0);
+    let code = generate(&info, best, "data", Language::C);
+    assert!(code.contains("uint8_t"));
+}
+
+#[test]
+fn test_u16_boundary() {
+    // Test values requiring u16
+    let data = vec![0, 255, 256, 65535];
+    let (info, best) = pack_table(&data, 0, 1.0);
+    let code = generate(&info, best, "data", Language::C);
+    assert!(code.contains("uint16_t"));
+}
+
+#[test]
+fn test_alternating_pattern() {
+    // Alternating 0/1 pattern
+    let data: Vec<i64> = (0..100).map(|i| i % 2).collect();
+    let (info, best) = pack_table(&data, 0, 1.0);
+    let solution = &info.solutions[best];
+    // Should use sub-byte packing
+    assert!(solution.cost < 100); // Better than naive storage
+}
+
+#[test]
+fn test_power_of_two_values() {
+    // Values that are powers of two
+    let data = vec![1, 2, 4, 8, 16, 32, 64, 128];
+    let (info, best) = pack_table(&data, 0, 1.0);
+    let code = generate(&info, best, "data", Language::C);
+    assert!(!code.is_empty());
 }

@@ -467,7 +467,8 @@ impl OuterLayerInfo {
         }
 
         // Bake in bias if it doesn't enlarge the type and doesn't introduce negatives.
-        if bias != 0 && mult == 1 && *base.iter().min().unwrap() >= 0 {
+        // Don't bake if data is all zeros (constant), as InnerLayer optimizes that case to cost=0.
+        if bias != 0 && mult == 1 && *base.iter().min().unwrap() >= 0 && max_v != 0 {
             let base_min = *base.iter().min().unwrap();
             let base_max = *base.iter().max().unwrap();
             let current_min = *reduced.iter().min().unwrap();
@@ -596,11 +597,12 @@ mod tests {
     #[test]
     fn test_outer_bias_optimization() {
         // bias gets baked in when original data fits in same type
-        let layer = OuterLayerInfo::new(&[100, 101, 102, 103], 0);
+        // Use non-linear data so identity optimization doesn't interfere
+        let layer = OuterLayerInfo::new(&[100, 105, 110, 115], 0);
         assert_eq!(layer.bias, 0);
 
         // bias kept when baking in would enlarge the type
-        let layer = OuterLayerInfo::new(&[1000, 1001, 1002, 1003], 0);
+        let layer = OuterLayerInfo::new(&[1000, 1005, 1010, 1015], 0);
         assert_eq!(layer.bias, 1000);
     }
 
