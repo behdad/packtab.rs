@@ -46,8 +46,39 @@ impl CodeBuilder {
     fn add_array(&mut self, typ: IntType, name: &str, values: &[i64]) -> (String, usize) {
         let full_name = self.name_for(name);
         if let Some(idx) = self.array_offsets.get(&full_name).copied() {
-            let start = self.arrays[idx].2.len();
-            self.arrays[idx].2.extend_from_slice(values);
+            let mut start = self.arrays[idx].2.len();
+
+            // Overlap optimization: if last element of existing array equals
+            // first element of new values, find maximum overlap of that value
+            let mut overlap = 0;
+            if !self.arrays[idx].2.is_empty()
+                && !values.is_empty()
+                && self.arrays[idx].2.last() == values.first()
+            {
+                let overlap_value = *self.arrays[idx].2.last().unwrap();
+
+                // Count trailing run of overlap_value in existing array
+                let trailing_count = self.arrays[idx]
+                    .2
+                    .iter()
+                    .rev()
+                    .take_while(|&&v| v == overlap_value)
+                    .count();
+
+                // Count leading run of overlap_value in new values
+                let leading_count = values.iter().take_while(|&&v| v == overlap_value).count();
+
+                // Overlap by the minimum of the two runs
+                overlap = trailing_count.min(leading_count);
+            }
+
+            if overlap > 0 {
+                start -= overlap;
+                self.arrays[idx].2.extend_from_slice(&values[overlap..]);
+            } else {
+                self.arrays[idx].2.extend_from_slice(values);
+            }
+
             return (full_name, start);
         }
         let idx = self.arrays.len();
