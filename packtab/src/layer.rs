@@ -63,9 +63,13 @@ impl InnerLayerChain {
             }
 
             // Split: pad to even length, pair adjacent elements
+            // Smart padding: choose value that creates most common pair.
+            // The padded position is never accessed, so this is safe.
             let cur = self.layers.last_mut().unwrap();
             if cur.data.len() & 1 != 0 {
-                cur.data.push(0);
+                let last_val = cur.data[cur.data.len() - 1];
+                let padding = Self::choose_optimal_padding(&cur.data, last_val);
+                cur.data.push(padding);
             }
 
             // Collect pairs with frequencies and first occurrence positions
@@ -109,6 +113,55 @@ impl InnerLayerChain {
             cur.mapping = Some(mapping);
             data = data2;
         }
+    }
+
+    /// Choose padding value that maximizes compression.
+    ///
+    /// Returns a value V such that the pair (last_val, V) is the most
+    /// common existing pair starting with last_val. If no such pair
+    /// exists, returns the most frequent value overall.
+    ///
+    /// When padding is needed, the padded element is never accessed
+    /// (guaranteed unreachable), so we choose a padding value that
+    /// creates the most common pair, maximizing compression.
+    fn choose_optimal_padding(data: &[i64], last_val: i64) -> i64 {
+        use std::collections::HashMap;
+
+        // Count existing pairs to find common patterns
+        let mut pair_freq: HashMap<(i64, i64), usize> = HashMap::new();
+        for i in (0..data.len() - 1).step_by(2) {
+            let pair = (data[i], data[i + 1]);
+            *pair_freq.entry(pair).or_insert(0) += 1;
+        }
+
+        // Find which value V makes (last_val, V) most frequent
+        let mut candidates: HashMap<i64, usize> = HashMap::new();
+        for ((a, b), freq) in pair_freq.iter() {
+            if *a == last_val {
+                candidates.insert(*b, *freq);
+            }
+        }
+
+        if !candidates.is_empty() {
+            // Return V that makes (last_val, V) most common
+            return *candidates
+                .iter()
+                .max_by_key(|(_, &freq)| freq)
+                .map(|(val, _)| val)
+                .unwrap();
+        }
+
+        // No pairs with last_val - use most frequent value overall
+        // to maximize future duplicate detection opportunities
+        let mut value_freq: HashMap<i64, usize> = HashMap::new();
+        for &val in data.iter() {
+            *value_freq.entry(val).or_insert(0) += 1;
+        }
+        *value_freq
+            .iter()
+            .max_by_key(|(_, &freq)| freq)
+            .map(|(val, _)| val)
+            .unwrap()
     }
 
     fn build_solutions(&mut self) {
