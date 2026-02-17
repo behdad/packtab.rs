@@ -238,23 +238,23 @@ fn print_analysis(data: &[i64], default: i64, compression: f64) {
     println!("{}", "-".repeat(70));
 
     for (i, sol) in info.solutions.iter().enumerate() {
-        let ratio = if sol.cost > 0 {
-            original_bytes as f64 / sol.cost as f64
+        let ratio = if sol.cost() > 0 {
+            original_bytes as f64 / sol.cost() as f64
         } else {
             f64::INFINITY
         };
         let full_cost = sol.full_cost();
         let score = if full_cost > 0 {
-            sol.n_lookups as f64 + compression * ((full_cost as u64).ilog2() as f64)
+            sol.n_lookups() as f64 + compression * ((full_cost as u64).ilog2() as f64)
         } else {
-            sol.n_lookups as f64 - compression
+            sol.n_lookups() as f64 - compression
         };
         println!(
             "{:<3} {:<8} {:<9} {:<6} {:<8} {:>6.2}x {:>7.1}",
             i + 1,
-            sol.n_lookups,
-            sol.n_extra_ops,
-            sol.cost,
+            sol.n_lookups(),
+            sol.n_extra_ops(),
+            sol.cost(),
             full_cost,
             ratio,
             score
@@ -267,12 +267,12 @@ fn print_analysis(data: &[i64], default: i64, compression: f64) {
     println!("Best solution for compression={}: #{}", compression, chosen_idx + 1);
     println!(
         "  {} lookups, {} extra ops, {} bytes",
-        chosen.n_lookups, chosen.n_extra_ops, chosen.cost
+        chosen.n_lookups(), chosen.n_extra_ops(), chosen.cost()
     );
-    if chosen.cost > 0 {
+    if chosen.cost() > 0 {
         println!(
             "  Compression ratio: {:.2}x",
-            original_bytes as f64 / chosen.cost as f64
+            original_bytes as f64 / chosen.cost() as f64
         );
     } else {
         println!("  Compression ratio: ∞ (computed inline, no storage)");

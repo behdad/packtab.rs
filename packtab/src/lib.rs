@@ -9,8 +9,7 @@ pub mod util;
 mod tests;
 
 use codegen::Language;
-use layer::OuterLayerInfo;
-use solution::OuterSolution;
+use layer::{AnyOuterSolution, OuterLayerInfo};
 
 /// Pack a table of integers into compact multi-level lookup tables.
 ///
@@ -34,13 +33,13 @@ pub fn pack_table_all(data: &[i64], default: i64) -> OuterLayerInfo {
 /// The `compression` parameter controls the tradeoff:
 /// - Higher values prefer smaller tables (more compression).
 /// - Lower values prefer fewer lookups (faster access).
-pub fn pick_solution(solutions: &[OuterSolution], compression: f64) -> usize {
+pub fn pick_solution(solutions: &[AnyOuterSolution], compression: f64) -> usize {
     solutions
         .iter()
         .enumerate()
         .min_by(|(_, a), (_, b)| {
-            let score_a = a.n_lookups as f64 + compression * (a.full_cost() as f64).log2();
-            let score_b = b.n_lookups as f64 + compression * (b.full_cost() as f64).log2();
+            let score_a = a.n_lookups() as f64 + compression * (a.full_cost() as f64).log2();
+            let score_b = b.n_lookups() as f64 + compression * (b.full_cost() as f64).log2();
             score_a.partial_cmp(&score_b).unwrap()
         })
         .map(|(i, _)| i)

@@ -1,5 +1,5 @@
 use crate::mapping::AutoMapping;
-use crate::solution::{InnerSolution, OuterSolution, SUB_BYTE_ACCESS_OPS};
+use crate::solution::{full_cost, InnerSolution, OuterSolution, SUB_BYTE_ACCESS_OPS};
 use crate::util::{binary_bits_for, gcd};
 
 /// One level in the inner binary-split chain.
@@ -169,9 +169,13 @@ impl InnerLayerChain {
 
         // For each layer, if maxV == 0, it contributes a zero-cost solution.
         // The deepest layer with maxV == 0 gives a constant solution.
+        // Point to the *actual* constant layer (n_layers-1) so that
+        // root_solutions() (which filters layer_idx==0) only includes it
+        // when the root itself is constant (n_layers==1).  For deeper
+        // constant layers the solution is referenced as a child only.
         if self.layers[n_layers - 1].max_v == 0 {
             self.solutions.push(InnerSolution {
-                layer_idx: 0,
+                layer_idx: n_layers - 1,
                 next: None,
                 n_lookups: 0,
                 n_extra_ops: 0,
@@ -403,6 +407,63 @@ fn mark_keep(solutions: &[InnerSolution], idx: usize, keep: &mut [bool]) {
     }
 }
 
+/// A palette-encoded solution: stores a compact array of unique values (the
+/// palette) and a separate inner chain that looks up palette indices.
+///
+/// Analogous to indexed colour: instead of storing wide values directly, we
+/// store narrow palette indices that index into a small palette table.
+#[derive(Debug, Clone)]
+pub struct PaletteOuterSolution {
+    /// Index into `OuterLayerInfo::palette_inner.solutions`.
+    pub inner_idx: usize,
+    pub n_lookups: usize,
+    pub n_extra_ops: usize,
+    pub cost: usize,
+}
+
+impl PaletteOuterSolution {
+    pub fn full_cost(&self) -> usize {
+        full_cost(self.n_lookups, self.n_extra_ops, self.cost)
+    }
+}
+
+/// Either a direct (arithmetic-encoded) or palette-encoded outer solution.
+#[derive(Debug, Clone)]
+pub enum AnyOuterSolution {
+    Direct(OuterSolution),
+    Palette(PaletteOuterSolution),
+}
+
+impl AnyOuterSolution {
+    pub fn n_lookups(&self) -> usize {
+        match self {
+            AnyOuterSolution::Direct(s) => s.n_lookups,
+            AnyOuterSolution::Palette(s) => s.n_lookups,
+        }
+    }
+    pub fn n_extra_ops(&self) -> usize {
+        match self {
+            AnyOuterSolution::Direct(s) => s.n_extra_ops,
+            AnyOuterSolution::Palette(s) => s.n_extra_ops,
+        }
+    }
+    pub fn cost(&self) -> usize {
+        match self {
+            AnyOuterSolution::Direct(s) => s.cost,
+            AnyOuterSolution::Palette(s) => s.cost,
+        }
+    }
+    pub fn full_cost(&self) -> usize {
+        match self {
+            AnyOuterSolution::Direct(s) => s.full_cost(),
+            AnyOuterSolution::Palette(s) => s.full_cost(),
+        }
+    }
+    pub fn is_palette(&self) -> bool {
+        matches!(self, AnyOuterSolution::Palette(_))
+    }
+}
+
 /// Arithmetic preprocessing result.
 #[derive(Debug)]
 pub struct OuterLayerInfo {
@@ -420,8 +481,12 @@ pub struct OuterLayerInfo {
     pub bytes: usize,
     /// The inner chain operating on reduced data.
     pub inner: InnerLayerChain,
-    /// OuterSolutions wrapping inner solutions.
-    pub solutions: Vec<OuterSolution>,
+    /// Palette values for palette encoding (empty if no palette encoding).
+    pub palette: Vec<i64>,
+    /// Inner chain for palette index lookups (None if no palette encoding).
+    pub palette_inner: Option<InnerLayerChain>,
+    /// All Pareto-frontier solutions (direct and palette interleaved).
+    pub solutions: Vec<AnyOuterSolution>,
 }
 
 /// Find the (unitBits, bias, mult) triple that minimizes unitBits.
@@ -528,7 +593,10 @@ impl OuterLayerInfo {
             let current_max = *reduced.iter().max().unwrap();
             let current_type_width = binary_bits_for(current_min, current_max).max(8);
             let base_type_width = binary_bits_for(base_min, base_max).max(8);
-            if base_type_width <= current_type_width {
+            // Only bake in if the reduced data is not all-zeros. When it is
+            // all-zeros the InnerLayer constant optimisation gives cost=0;
+            // baking in the bias would destroy that benefit.
+            if base_type_width <= current_type_width && current_max != 0 {
                 reduced = base.clone();
                 unit_bits = binary_bits_for(base_min, base_max);
                 bias = 0;
@@ -554,16 +622,25 @@ impl OuterLayerInfo {
 
         // Wrap each root-level InnerSolution in an OuterSolution.
         let root_idxs = inner.root_solutions();
-        let mut solutions = Vec::new();
+        let mut solutions: Vec<AnyOuterSolution> = Vec::new();
         for &sol_idx in &root_idxs {
             let s = &inner.solutions[sol_idx];
-            solutions.push(OuterSolution {
+            solutions.push(AnyOuterSolution::Direct(OuterSolution {
                 inner_idx: sol_idx,
                 n_lookups: s.n_lookups,
                 n_extra_ops: s.n_extra_ops + extra_ops,
                 cost: s.cost,
-            });
+            }));
         }
+
+        // Try palette encoding on the reduced data.
+        let reduced_data = inner.layers[0].data.clone();
+        let (palette, palette_inner_opt, palette_sols) =
+            try_palette_encoding(&reduced_data, extra_ops);
+        solutions.extend(palette_sols);
+
+        // Pareto-prune the combined direct + palette solutions.
+        solutions = pareto_prune_outer(solutions);
 
         OuterLayerInfo {
             data,
@@ -577,9 +654,112 @@ impl OuterLayerInfo {
             extra_ops,
             bytes,
             inner,
+            palette,
+            palette_inner: palette_inner_opt,
             solutions,
         }
     }
+}
+
+/// Attempt palette encoding on `reduced_data`.
+///
+/// Builds a sorted palette of unique values and an index array, then wraps
+/// every solution from the index `InnerLayerChain` as a `PaletteOuterSolution`.
+/// Returns `(palette, Some(chain), solutions)` when palette encoding is
+/// beneficial; `(empty, None, empty)` otherwise.
+fn try_palette_encoding(
+    reduced_data: &[i64],
+    extra_ops: usize,
+) -> (Vec<i64>, Option<InnerLayerChain>, Vec<AnyOuterSolution>) {
+    // Collect unique values in sorted order.
+    let palette: Vec<i64> = {
+        let mut set = std::collections::BTreeSet::new();
+        for &v in reduced_data {
+            set.insert(v);
+        }
+        set.into_iter().collect()
+    };
+
+    // Degenerate cases: nothing to compress.
+    if palette.len() <= 1 {
+        return (vec![], None, vec![]);
+    }
+
+    let pal_min = palette[0];
+    let pal_max = *palette.last().unwrap();
+
+    // Only proceed if index bits are strictly fewer than value bits.
+    let index_bits = binary_bits_for(0, (palette.len() - 1) as i64);
+    let value_bits = binary_bits_for(pal_min, pal_max);
+    if index_bits >= value_bits {
+        return (vec![], None, vec![]);
+    }
+
+    // Map each value to its palette index.
+    let value_to_index: std::collections::HashMap<i64, usize> =
+        palette.iter().copied().enumerate().map(|(i, v)| (v, i)).collect();
+    let indices: Vec<i64> = reduced_data
+        .iter()
+        .map(|&v| value_to_index[&v] as i64)
+        .collect();
+
+    // Build an inner chain for the indices (can be split further).
+    let palette_chain = InnerLayerChain::new(indices);
+
+    // Palette storage cost in bytes.
+    let palette_cost = (value_bits as usize * palette.len() + 7) / 8;
+
+    // Wrap each root-level index solution as a PaletteOuterSolution.
+    let root_idxs = palette_chain.root_solutions();
+    let mut solutions = Vec::new();
+    for inner_idx in root_idxs {
+        let s = &palette_chain.solutions[inner_idx];
+        solutions.push(AnyOuterSolution::Palette(PaletteOuterSolution {
+            inner_idx,
+            n_lookups: s.n_lookups + 1, // +1 for the palette array lookup
+            n_extra_ops: s.n_extra_ops + extra_ops,
+            cost: s.cost + palette_cost,
+        }));
+    }
+
+    (palette, Some(palette_chain), solutions)
+}
+
+/// Pareto-prune a set of outer solutions.
+///
+/// Keeps only non-dominated solutions: sorted by n_lookups ascending, a
+/// solution is kept only if its full_cost is strictly lower than all
+/// previously kept solutions (i.e. it's cheaper for its lookup depth).
+fn pareto_prune_outer(solutions: Vec<AnyOuterSolution>) -> Vec<AnyOuterSolution> {
+    let n = solutions.len();
+    if n == 0 {
+        return solutions;
+    }
+
+    // Sort indices by (n_lookups, full_cost) ascending.
+    let mut indexed: Vec<usize> = (0..n).collect();
+    indexed.sort_by(|&a, &b| {
+        let sa = &solutions[a];
+        let sb = &solutions[b];
+        (sa.n_lookups(), sa.full_cost()).cmp(&(sb.n_lookups(), sb.full_cost()))
+    });
+
+    // Keep a solution only when it improves the running best full_cost.
+    let mut keep = vec![false; n];
+    let mut best_cost = usize::MAX;
+    for &i in &indexed {
+        let fc = solutions[i].full_cost();
+        if fc < best_cost {
+            keep[i] = true;
+            best_cost = fc;
+        }
+    }
+
+    solutions
+        .into_iter()
+        .zip(keep)
+        .filter_map(|(s, k)| if k { Some(s) } else { None })
+        .collect()
 }
 
 #[cfg(test)]

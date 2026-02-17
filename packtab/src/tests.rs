@@ -1,5 +1,5 @@
 use crate::codegen::Language;
-use crate::layer::{InnerLayerChain, OuterLayerInfo};
+use crate::layer::{AnyOuterSolution, InnerLayerChain, OuterLayerInfo};
 use crate::{generate, pack_table, pack_table_all, pick_solution};
 use std::process::Command;
 
@@ -120,7 +120,7 @@ fn test_high_compression_prefers_smaller() {
     let fast_s = &info.solutions[fast];
     assert!(
         small_s.full_cost() <= fast_s.full_cost()
-            || small_s.n_lookups >= fast_s.n_lookups
+            || small_s.n_lookups() >= fast_s.n_lookups()
     );
 }
 
@@ -456,7 +456,7 @@ fn test_all_same_values() {
     let (info, best) = pack_table(&data, 0, 1.0);
     let solution = &info.solutions[best];
     // Should recognize constant data
-    assert_eq!(solution.cost, 0); // Inlined
+    assert_eq!(solution.cost(), 0); // Inlined
 }
 
 #[test]
@@ -505,7 +505,7 @@ fn test_alternating_pattern() {
     let (info, best) = pack_table(&data, 0, 1.0);
     let solution = &info.solutions[best];
     // Should use sub-byte packing
-    assert!(solution.cost < 100); // Better than naive storage
+    assert!(solution.cost() < 100); // Better than naive storage
 }
 
 #[test]
@@ -515,4 +515,291 @@ fn test_power_of_two_values() {
     let (info, best) = pack_table(&data, 0, 1.0);
     let code = generate(&info, best, "data", Language::C);
     assert!(!code.is_empty());
+}
+
+// ── Palette encoding tests ───────────────────────────────────────
+
+#[test]
+fn test_palette_generated_for_outlier() {
+    // The outlier forces 32-bit storage; palette encoding should be generated.
+    let data = vec![1i64, 2, 3, 2, 3, 2, 1, 0, 2, 1, 2, 2, 3, 3, 1, 11110124];
+    let info = pack_table_all(&data, 0);
+
+    let palette_solutions: Vec<_> = info.solutions.iter().filter(|s| s.is_palette()).collect();
+    assert!(!palette_solutions.is_empty(), "should have at least one palette solution");
+
+    // Palette should contain all unique values sorted.
+    assert_eq!(info.palette, vec![0, 1, 2, 3, 11110124]);
+
+    // A palette solution adds one lookup for the palette array.
+    assert!(palette_solutions[0].n_lookups() >= 2);
+}
+
+#[test]
+fn test_palette_skipped_all_unique() {
+    // After identity reduction, all values become 0; no palette benefit.
+    let data: Vec<i64> = (0..100).collect();
+    let info = pack_table_all(&data, 0);
+
+    assert!(
+        !info.solutions.iter().any(|s| s.is_palette()),
+        "should not have palette solutions when all values unique (after reduction)"
+    );
+}
+
+#[test]
+fn test_palette_skipped_no_savings() {
+    // 16 unique values: after identity reduction the data is all-zeros,
+    // so index_bits == value_bits and palette is skipped.
+    let data: Vec<i64> = (0..16).collect();
+    let info = pack_table_all(&data, 0);
+
+    assert!(
+        !info.solutions.iter().any(|s| s.is_palette()),
+        "should not have palette solutions when no bit savings"
+    );
+}
+
+#[test]
+fn test_palette_with_few_unique_values() {
+    // 100 random values from {1,2,3,4,5} (Python random.seed(42)) plus one huge outlier.
+    // Random data does not produce regular pairs, so binary splitting is less effective
+    // than palette encoding for this range of values.
+    let data: Vec<i64> = vec![
+        1, 1, 3, 2, 2, 2, 1, 5, 1, 5, 4, 1, 1, 1, 2, 2, 5, 5, 1, 5, 2, 5, 4, 2, 4, 5, 3, 1, 2,
+        4, 3, 3, 2, 2, 3, 1, 1, 4, 1, 3, 3, 5, 3, 1, 4, 5, 1, 4, 1, 5, 3, 5, 3, 5, 2, 1, 1, 2,
+        3, 1, 2, 1, 4, 3, 4, 3, 2, 3, 3, 2, 3, 1, 5, 2, 5, 2, 2, 4, 4, 3, 5, 2, 3, 1, 2, 1, 3,
+        4, 3, 1, 2, 5, 3, 2, 4, 4, 4, 2, 3, 2, 999999,
+    ];
+    let info = pack_table_all(&data, 0);
+
+    assert!(
+        info.solutions.iter().any(|s| s.is_palette()),
+        "should have palette solution for few-unique + outlier data"
+    );
+    assert!(info.palette.len() <= 7, "palette should be small");
+}
+
+#[test]
+fn test_palette_cost_calculation() {
+    let data = vec![1i64, 2, 3, 2, 3, 2, 1, 0, 2, 1, 2, 2, 3, 3, 1, 11110124];
+    let info = pack_table_all(&data, 0);
+
+    let palette_sol = info
+        .solutions
+        .iter()
+        .find(|s| s.is_palette())
+        .expect("should have palette solution");
+
+    // Palette: 5 values × 4 bytes = 20 bytes; indices: 16 × 4 bits / 8 = 8 bytes → ~28 bytes.
+    assert!(palette_sol.cost() <= 30, "palette cost should be ≤30 bytes");
+    assert!(palette_sol.cost() < 64, "palette cost should beat direct (64 bytes)");
+}
+
+#[test]
+fn test_palette_in_pareto_frontier() {
+    // All returned solutions must be mutually non-dominated.
+    let data = vec![1i64, 2, 3, 2, 3, 2, 1, 0, 2, 1, 2, 2, 3, 3, 1, 11110124];
+    let info = pack_table_all(&data, 0);
+
+    for a in &info.solutions {
+        for b in &info.solutions {
+            if std::ptr::eq(a, b) {
+                continue;
+            }
+            assert!(
+                !(a.n_lookups() <= b.n_lookups() && a.full_cost() <= b.full_cost()),
+                "Found dominated solution in Pareto frontier"
+            );
+        }
+    }
+}
+
+#[test]
+fn test_palette_selected_large_dataset() {
+    // 1000 random values from {1,2,3,4,5} (Python random.seed(42)) plus one huge outlier.
+    // Random data: binary splitting is less effective than palette encoding.
+    let data: Vec<i64> = vec![
+        1, 1, 3, 2, 2, 2, 1, 5, 1, 5, 4, 1, 1, 1, 2, 2, 5, 5, 1, 5,
+        2, 5, 4, 2, 4, 5, 3, 1, 2, 4, 3, 3, 2, 2, 3, 1, 1, 4, 1, 3,
+        3, 5, 3, 1, 4, 5, 1, 4, 1, 5, 3, 5, 3, 5, 2, 1, 1, 2, 3, 1,
+        2, 1, 4, 3, 4, 3, 2, 3, 3, 2, 3, 1, 5, 2, 5, 2, 2, 4, 4, 3,
+        5, 2, 3, 1, 2, 1, 3, 4, 3, 1, 2, 5, 3, 2, 4, 4, 4, 2, 3, 2,
+        2, 5, 5, 3, 5, 4, 5, 4, 3, 2, 2, 5, 4, 1, 1, 1, 2, 2, 4, 5,
+        1, 4, 4, 5, 4, 5, 3, 5, 1, 1, 5, 3, 3, 1, 3, 4, 2, 4, 1, 3,
+        5, 2, 5, 1, 3, 5, 5, 2, 2, 3, 2, 5, 5, 1, 5, 3, 4, 1, 1, 3,
+        3, 2, 1, 2, 5, 1, 1, 4, 1, 5, 2, 2, 4, 5, 2, 3, 5, 5, 4, 2,
+        5, 2, 3, 4, 3, 4, 5, 4, 1, 2, 2, 1, 3, 1, 5, 5, 2, 5, 2, 1,
+        1, 1, 2, 1, 1, 3, 1, 5, 2, 3, 4, 2, 5, 2, 5, 5, 4, 2, 4, 4,
+        2, 1, 1, 4, 3, 4, 4, 4, 1, 1, 1, 4, 3, 1, 2, 2, 2, 5, 4, 2,
+        4, 2, 3, 4, 2, 1, 4, 5, 1, 1, 5, 1, 1, 2, 2, 4, 4, 4, 2, 4,
+        1, 2, 4, 1, 4, 3, 4, 3, 4, 5, 4, 2, 2, 3, 2, 1, 5, 5, 1, 3,
+        1, 1, 5, 4, 5, 5, 2, 1, 5, 1, 2, 1, 5, 1, 2, 4, 1, 5, 2, 5,
+        5, 1, 5, 1, 4, 5, 5, 5, 3, 3, 2, 3, 2, 3, 4, 2, 3, 4, 3, 1,
+        1, 4, 5, 5, 1, 1, 5, 2, 5, 3, 2, 3, 1, 2, 3, 3, 2, 4, 5, 3,
+        5, 5, 1, 5, 3, 1, 2, 3, 1, 1, 5, 2, 3, 3, 5, 2, 3, 2, 3, 5,
+        4, 3, 1, 1, 4, 3, 1, 1, 3, 2, 3, 2, 4, 5, 4, 5, 1, 1, 1, 2,
+        5, 1, 3, 5, 5, 2, 4, 2, 1, 3, 3, 1, 3, 2, 2, 1, 3, 5, 4, 5,
+        2, 2, 2, 2, 4, 1, 2, 3, 4, 2, 3, 2, 1, 4, 1, 4, 2, 2, 4, 3,
+        3, 2, 2, 1, 2, 4, 3, 3, 1, 3, 3, 5, 4, 5, 3, 1, 1, 3, 2, 5,
+        3, 1, 1, 5, 4, 3, 3, 4, 5, 5, 1, 4, 5, 2, 3, 1, 4, 1, 5, 5,
+        2, 3, 4, 1, 3, 5, 3, 1, 3, 5, 3, 4, 3, 4, 3, 5, 2, 2, 4, 4,
+        2, 5, 5, 3, 4, 5, 1, 3, 3, 2, 4, 5, 5, 3, 4, 4, 4, 2, 5, 4,
+        2, 1, 3, 5, 5, 3, 1, 2, 3, 2, 2, 2, 1, 1, 2, 4, 5, 1, 4, 4,
+        5, 2, 4, 4, 4, 2, 2, 1, 1, 4, 2, 2, 5, 4, 1, 5, 2, 1, 4, 2,
+        4, 5, 5, 5, 3, 4, 5, 5, 4, 5, 4, 2, 4, 4, 3, 2, 3, 5, 4, 2,
+        3, 4, 1, 3, 2, 3, 3, 3, 5, 1, 2, 2, 2, 4, 2, 2, 1, 4, 4, 3,
+        5, 4, 4, 1, 2, 4, 4, 5, 1, 5, 4, 4, 1, 3, 3, 4, 4, 5, 5, 5,
+        2, 4, 2, 3, 4, 4, 1, 4, 3, 4, 2, 4, 2, 5, 5, 1, 4, 5, 5, 1,
+        1, 4, 2, 4, 2, 1, 3, 4, 3, 2, 4, 3, 3, 4, 3, 4, 3, 1, 4, 1,
+        5, 1, 3, 2, 1, 1, 1, 2, 2, 1, 5, 2, 2, 2, 4, 1, 5, 2, 4, 3,
+        3, 2, 5, 5, 1, 2, 3, 1, 5, 1, 3, 5, 4, 4, 2, 1, 5, 2, 1, 3,
+        5, 1, 5, 1, 3, 5, 4, 3, 1, 5, 3, 1, 4, 4, 1, 4, 3, 4, 2, 4,
+        2, 5, 3, 5, 5, 4, 4, 4, 5, 3, 3, 2, 1, 3, 4, 2, 4, 5, 5, 4,
+        3, 1, 4, 3, 2, 4, 2, 3, 3, 3, 3, 5, 3, 5, 1, 5, 2, 1, 2, 4,
+        4, 5, 2, 4, 4, 4, 1, 1, 3, 2, 4, 2, 3, 5, 3, 4, 5, 5, 3, 4,
+        5, 3, 3, 4, 3, 3, 3, 2, 1, 2, 3, 1, 5, 2, 2, 2, 4, 3, 5, 5,
+        5, 3, 1, 2, 3, 2, 3, 2, 3, 1, 5, 2, 3, 1, 1, 5, 3, 2, 4, 1,
+        1, 5, 3, 4, 4, 4, 3, 2, 1, 3, 4, 1, 1, 4, 4, 1, 5, 1, 2, 2,
+        5, 3, 1, 2, 1, 5, 4, 5, 5, 5, 2, 5, 4, 4, 4, 3, 5, 4, 3, 5,
+        5, 1, 5, 1, 2, 2, 3, 1, 2, 2, 2, 5, 1, 2, 1, 4, 4, 5, 4, 3,
+        1, 2, 3, 3, 4, 1, 2, 3, 5, 2, 4, 1, 5, 2, 2, 3, 2, 1, 1, 2,
+        3, 5, 5, 3, 4, 1, 4, 3, 4, 3, 5, 5, 4, 4, 1, 5, 1, 4, 3, 5,
+        3, 1, 1, 2, 5, 5, 1, 3, 5, 1, 2, 4, 5, 4, 3, 2, 5, 4, 4, 1,
+        4, 3, 4, 3, 3, 1, 2, 3, 4, 4, 3, 4, 5, 1, 4, 1, 3, 3, 3, 1,
+        4, 5, 1, 5, 4, 4, 1, 2, 5, 3, 5, 4, 4, 1, 2, 3, 5, 2, 3, 4,
+        4, 1, 1, 5, 2, 2, 3, 5, 1, 5, 4, 1, 2, 1, 4, 1, 2, 4, 3, 5,
+        3, 4, 4, 4, 2, 4, 5, 2, 4, 2, 5, 5, 2, 1, 3, 4, 3, 5, 3, 1,
+        999999,
+    ];
+
+    let (info, best) = pack_table(&data, 0, 1.0);
+    let solution = &info.solutions[best];
+
+    assert!(solution.is_palette(), "palette should be selected for large dataset with outlier");
+    assert_eq!(info.palette.len(), 6, "palette should have 5 values + 1 outlier");
+}
+
+#[test]
+fn test_palette_code_generation_c() {
+    let data = vec![1i64, 2, 3, 2, 3, 2, 1, 0, 2, 1, 2, 2, 3, 3, 1, 11110124];
+    let info = pack_table_all(&data, 0);
+    let palette_idx = info
+        .solutions
+        .iter()
+        .position(|s| s.is_palette())
+        .expect("should have palette solution");
+
+    let code = generate(&info, palette_idx, "data", Language::C);
+    assert!(code.contains("palette"), "C output should contain 'palette'");
+    assert!(code.contains("11110124"), "C output should contain the outlier value");
+}
+
+#[test]
+fn test_palette_code_generation_rust() {
+    let data = vec![1i64, 2, 3, 2, 3, 2, 1, 0, 2, 1, 2, 2, 3, 3, 1, 11110124];
+    let info = pack_table_all(&data, 0);
+    let palette_idx = info
+        .solutions
+        .iter()
+        .position(|s| s.is_palette())
+        .expect("should have palette solution");
+
+    let code = generate(&info, palette_idx, "data", Language::Rust { unsafe_access: false });
+    assert!(code.contains("palette"), "Rust output should contain 'palette'");
+    assert!(code.contains("fn ") || code.contains("#[inline]"), "should contain a function");
+}
+
+#[test]
+fn test_palette_end_to_end_c() {
+    // 50 values cycling through {10,20,30} plus one outlier.
+    let data: Vec<i64> = (0..50i64)
+        .map(|i| (i % 3 + 1) * 10)
+        .chain(std::iter::once(999999))
+        .collect();
+    let info = pack_table_all(&data, 0);
+    let palette_idx = info
+        .solutions
+        .iter()
+        .position(|s| s.is_palette())
+        .expect("should have palette solution");
+
+    let code = generate(&info, palette_idx, "data", Language::C);
+    compile_and_run_c(&code, &data, 0);
+}
+
+#[test]
+fn test_palette_end_to_end_rust() {
+    let data: Vec<i64> = (0..50i64)
+        .map(|i| (i % 3 + 1) * 10)
+        .chain(std::iter::once(999999))
+        .collect();
+    let info = pack_table_all(&data, 0);
+    let palette_idx = info
+        .solutions
+        .iter()
+        .position(|s| s.is_palette())
+        .expect("should have palette solution");
+
+    let code = generate(&info, palette_idx, "data", Language::Rust { unsafe_access: false });
+    compile_and_run_rust(&code, &data, 0);
+}
+
+#[test]
+fn test_palette_end_to_end_rust_unsafe() {
+    let data: Vec<i64> = (0..50i64)
+        .map(|i| (i % 3 + 1) * 10)
+        .chain(std::iter::once(999999))
+        .collect();
+    let info = pack_table_all(&data, 0);
+    let palette_idx = info
+        .solutions
+        .iter()
+        .position(|s| s.is_palette())
+        .expect("should have palette solution");
+
+    let code = generate(&info, palette_idx, "data", Language::Rust { unsafe_access: true });
+    compile_and_run_rust(&code, &data, 0);
+}
+
+#[test]
+fn test_palette_with_bias() {
+    // Values with a common offset + outlier; palette should still generate valid code.
+    let data = vec![100i64, 101, 102, 101, 102, 101, 100, 99, 999999];
+    let info = pack_table_all(&data, 0);
+
+    if let Some(palette_idx) = info.solutions.iter().position(|s| s.is_palette()) {
+        let code = generate(&info, palette_idx, "data", Language::C);
+        assert!(!code.is_empty());
+    }
+    // If no palette solution was generated that's also valid (the bias
+    // optimisation may collapse the range enough to skip palette).
+}
+
+#[test]
+fn test_palette_with_repeated_pattern() {
+    // Repeated base pattern + outlier; any solution should produce valid code.
+    let base = vec![1i64, 2, 3, 2, 3, 2, 1, 0];
+    let mut data: Vec<i64> = base.iter().cycle().take(8 * 32).copied().collect();
+    data.push(999999);
+
+    let (info, best) = pack_table(&data, 0, 5.0);
+    let code = generate(&info, best, "data", Language::C);
+    assert!(!code.is_empty());
+}
+
+#[test]
+fn test_palette_separate_from_other_arrays() {
+    // The palette array must appear under its own namespaced name.
+    let data = vec![1i64, 2, 3, 2, 3, 2, 1, 0, 2, 1, 2, 2, 3, 3, 1, 11110124];
+    let info = pack_table_all(&data, 0);
+    let palette_idx = info
+        .solutions
+        .iter()
+        .position(|s| s.is_palette())
+        .expect("should have palette solution");
+
+    let code = generate(&info, palette_idx, "data", Language::C);
+    assert!(code.contains("data_palette"), "output should contain 'data_palette'");
+    assert!(code.contains("palette["), "output should contain a palette[] access");
 }

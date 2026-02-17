@@ -1,5 +1,5 @@
 use crate::ir::{ArrayDecl, CodeIR, FuncDecl, IntType, AccessorDecl};
-use crate::layer::{InnerLayerChain, OuterLayerInfo};
+use crate::layer::{AnyOuterSolution, InnerLayerChain, OuterLayerInfo, PaletteOuterSolution};
 use crate::solution::OuterSolution;
 use crate::util::{combine, expand};
 
@@ -422,15 +422,120 @@ fn gen_outer_code(
     (ret_type, expr)
 }
 
+/// Generate code for a PaletteOuterSolution.
+///
+/// Emits a palette array of unique values and a lookup function that:
+///   1. uses the inner chain to get a palette index, then
+///   2. returns `palette[index]` (with the same arithmetic as `gen_outer_code`).
+fn gen_palette_outer_code(
+    palette_sol: &PaletteOuterSolution,
+    outer_info: &OuterLayerInfo,
+    code_builder: &mut CodeBuilder,
+    name: Option<&str>,
+    var: &str,
+    lang: Language,
+    private: bool,
+) -> (IntType, String) {
+    let input_var = var;
+    let var = if name.is_some() { "u" } else { var };
+
+    let typ = IntType::for_range(outer_info.min_v, outer_info.max_v);
+    let ret_type = typ;
+
+    // Emit the palette array.
+    let palette = &outer_info.palette;
+    let pal_min = *palette.iter().min().unwrap();
+    let pal_max = *palette.iter().max().unwrap();
+    let palette_typ = IntType::for_range(pal_min, pal_max);
+    let (palette_name, _) = code_builder.add_array(palette_typ, "palette", palette);
+
+    // Generate the index lookup expression from the palette inner chain.
+    let palette_inner = outer_info.palette_inner.as_ref().unwrap();
+    let (_, index_expr) = gen_inner_code(
+        palette_sol.inner_idx,
+        palette_inner,
+        code_builder,
+        var,
+        lang,
+        1,
+    );
+
+    // Cast index to usize (required in Rust; no-op in C) and look up palette.
+    let index_usize = as_usize(&index_expr, lang);
+    let mut expr = array_index(&palette_name, &index_usize, lang);
+    expr = cast(&expr, ret_type, lang);
+
+    // Apply mult.
+    if outer_info.mult != 1 {
+        expr = format!("{}*{}", outer_info.mult, expr);
+    }
+
+    // Apply identity + bias.
+    if outer_info.identity {
+        expr = wrapping_add(&cast(var, ret_type, lang), &expr, lang);
+        if outer_info.bias > 0 {
+            expr = wrapping_add(
+                &uint_literal(outer_info.bias as u64, ret_type, lang),
+                &expr,
+                lang,
+            );
+        } else if outer_info.bias < 0 {
+            expr = wrapping_sub(
+                &expr,
+                &uint_literal((-outer_info.bias) as u64, ret_type, lang),
+                lang,
+            );
+        }
+    } else {
+        if outer_info.bias > 0 {
+            expr = format!("{}+{}", outer_info.bias, expr);
+        } else if outer_info.bias < 0 {
+            expr = format!("{}-{}", expr, -outer_info.bias);
+        }
+    }
+
+    // Bounds check with default.
+    let default_str = format!("{}", outer_info.default);
+    expr = ternary(
+        &format!("{}<{}", var, outer_info.data.len()),
+        &expr,
+        &default_str,
+        lang,
+    );
+
+    // Wrap in a named function if requested.
+    if let Some(name) = name {
+        let func_name = code_builder.add_function(ret_type, name, "u", &expr, private, false);
+        expr = format!("{}({})", func_name, input_var);
+    }
+
+    (ret_type, expr)
+}
+
 /// Build the full CodeIR for a solution.
 pub fn generate(
-    outer: &OuterSolution,
+    solution: &AnyOuterSolution,
     outer_info: &OuterLayerInfo,
     name: &str,
     lang: Language,
 ) -> CodeIR {
     let mut builder = CodeBuilder::new(name);
-    gen_outer_code(outer, outer_info, &mut builder, Some("get"), "u", lang, false);
+    match solution {
+        AnyOuterSolution::Direct(outer) => {
+            gen_outer_code(outer, outer_info, &mut builder, Some("get"), "u", lang, false);
+        }
+        AnyOuterSolution::Palette(palette_sol) => {
+            gen_palette_outer_code(
+                palette_sol,
+                outer_info,
+                &mut builder,
+                Some("get"),
+                "u",
+                lang,
+                false,
+            );
+        }
+    }
     builder.into_code_ir(true)
 }
 
