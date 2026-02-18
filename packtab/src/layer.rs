@@ -175,8 +175,11 @@ impl InnerLayerChain {
         //     layer j > k, wrap each of j's solutions with an expansion table of
         //     `bits = j - k` at layer k.
         //
-        // This correctly generates 4-lookup, 5-lookup, … solutions for deep chains,
-        // which the old explicit 2-level loop missed.
+        // After building each intermediate layer k > 0, Pareto-prune its solutions
+        // before parent layers wrap them.  This is safe because adding the same
+        // extra_cost to two solutions at layer k preserves dominance: if B is
+        // dominated by A at layer k, then (parent wrapping B) is dominated by
+        // (parent wrapping A).  Matching Python's prune_solutions() per layer.
 
         // Per-layer solution index lists (indices into self.solutions).
         let mut layer_sol_indices: Vec<Vec<usize>> = vec![Vec::new(); n_layers];
@@ -239,7 +242,35 @@ impl InnerLayerChain {
                     }
                 }
             }
+
+            // Pareto-prune intermediate layers so parent layers only wrap
+            // non-dominated solutions.  Skip the root (k == 0) since
+            // prune_solutions() handles it separately.
+            if k > 0 {
+                layer_sol_indices[k] =
+                    Self::pareto_prune_indices(&self.solutions, &layer_sol_indices[k]);
+            }
         }
+    }
+
+    /// Pareto-prune a list of solution indices.
+    ///
+    /// Returns the subset of `indices` that are non-dominated: sorted by
+    /// (n_lookups, full_cost) ascending, keeping only solutions whose
+    /// full_cost strictly improves on all previously kept solutions.
+    fn pareto_prune_indices(solutions: &[InnerSolution], indices: &[usize]) -> Vec<usize> {
+        let mut sorted = indices.to_vec();
+        sorted.sort_by_key(|&i| (solutions[i].n_lookups, solutions[i].full_cost()));
+        let mut kept = Vec::new();
+        let mut best_cost = usize::MAX;
+        for i in sorted {
+            let fc = solutions[i].full_cost();
+            if fc < best_cost {
+                kept.push(i);
+                best_cost = fc;
+            }
+        }
+        kept
     }
 
     fn prune_solutions(&mut self) {
@@ -556,9 +587,6 @@ impl OuterLayerInfo {
             try_palette_encoding(&reduced_data, extra_ops);
         solutions.extend(palette_sols);
 
-        // Pareto-prune the combined direct + palette solutions.
-        solutions = pareto_prune_outer(solutions);
-
         OuterLayerInfo {
             data,
             default,
@@ -642,42 +670,6 @@ fn try_palette_encoding(
     (palette, Some(palette_chain), solutions)
 }
 
-/// Pareto-prune a set of outer solutions.
-///
-/// Keeps only non-dominated solutions: sorted by n_lookups ascending, a
-/// solution is kept only if its full_cost is strictly lower than all
-/// previously kept solutions (i.e. it's cheaper for its lookup depth).
-fn pareto_prune_outer(solutions: Vec<AnyOuterSolution>) -> Vec<AnyOuterSolution> {
-    let n = solutions.len();
-    if n == 0 {
-        return solutions;
-    }
-
-    // Sort indices by (n_lookups, full_cost) ascending.
-    let mut indexed: Vec<usize> = (0..n).collect();
-    indexed.sort_by(|&a, &b| {
-        let sa = &solutions[a];
-        let sb = &solutions[b];
-        (sa.n_lookups(), sa.full_cost()).cmp(&(sb.n_lookups(), sb.full_cost()))
-    });
-
-    // Keep a solution only when it improves the running best full_cost.
-    let mut keep = vec![false; n];
-    let mut best_cost = usize::MAX;
-    for &i in &indexed {
-        let fc = solutions[i].full_cost();
-        if fc < best_cost {
-            keep[i] = true;
-            best_cost = fc;
-        }
-    }
-
-    solutions
-        .into_iter()
-        .zip(keep)
-        .filter_map(|(s, k)| if k { Some(s) } else { None })
-        .collect()
-}
 
 #[cfg(test)]
 mod tests {
@@ -793,51 +785,32 @@ mod tests {
         assert!(layer.identity);
     }
 
-    // ── Deep-chain tests (4-lookup+ solutions) ──────────────────────────────
+    // ── Deep-chain tests ────────────────────────────────────────────────────
     //
     // For these tests we use a repeating 0..16 pattern over 16 000 elements.
     // With 16 unique pair patterns the chain builds 5 inner layers (layers 0-4,
-    // where layer 4 is the all-zero constant).  The large data size (16 000
-    // values = 8 000 bytes at layer 0) means the byte savings from deep
-    // splitting far outweigh the extra lookup overhead, so all four lookup
-    // depths survive Pareto pruning.
+    // where layer 4 is the all-zero constant).  The 1-lookup wrap-constant
+    // solution is so cheap (8 bytes) that it dominates all multi-lookup
+    // alternatives, so exactly one solution survives Pareto pruning.
 
     fn deep_chain_data() -> Vec<i64> {
         // (0..16) repeated 1000 times → 16 000 elements, 5 inner layers.
         (0i64..16).cycle().take(16_000).collect()
     }
 
+    /// The chain for (0..16)*1000 data must build exactly 5 layers,
+    /// with the deepest being the all-zero constant layer.
     #[test]
-    fn test_inner_deep_chain_debug() {
+    fn test_inner_deep_chain_builds_five_layers() {
         let chain = InnerLayerChain::new(deep_chain_data());
-        println!("n_layers = {}", chain.layers.len());
-        for (i, l) in chain.layers.iter().enumerate() {
-            println!("  layer[{}]: max_v={}, unit_bits={}, bytes={}", i, l.max_v, l.unit_bits, l.bytes);
-        }
-        println!("n_solutions = {}", chain.solutions.len());
-        let root_idxs = chain.root_solutions();
-        println!("n_root_solutions = {}", root_idxs.len());
-        for &i in &root_idxs {
-            let s = &chain.solutions[i];
-            println!("  root[{}]: layer_idx={}, nl={}, fc={}", i, s.layer_idx, s.n_lookups, s.full_cost());
-        }
-    }
-
-    /// The old build_solutions only reached 3-lookup solutions; the new
-    /// bottom-up algorithm must produce at least one 4-lookup solution.
-    #[test]
-    fn test_inner_deep_chain_has_four_lookups() {
-        let chain = InnerLayerChain::new(deep_chain_data());
-        let root_idxs = chain.root_solutions();
-        let max_lookups = root_idxs
-            .iter()
-            .map(|&i| chain.solutions[i].n_lookups)
-            .max()
-            .unwrap_or(0);
-        assert!(
-            max_lookups >= 4,
-            "Expected >=4-lookup solution for 5-layer chain, got max {}",
-            max_lookups
+        assert_eq!(
+            chain.layers.len(), 5,
+            "Expected 5-layer chain for (0..16) repeating data, got {}",
+            chain.layers.len()
+        );
+        assert_eq!(
+            chain.layers.last().unwrap().max_v, 0,
+            "Deepest layer must be the all-zero constant"
         );
     }
 
@@ -898,20 +871,23 @@ mod tests {
         }
     }
 
-    /// With high compression the deepest (lowest byte-cost) solution must be
-    /// chosen.  For the 5-layer repeating data this is the 4-lookup solution.
+    /// pick_solution must return a valid index and choose a compact solution.
+    /// For (0..16)*1000 the 1-lookup wrap-constant (8 bytes) is optimal.
     #[test]
-    fn test_inner_deep_chain_high_compression_picks_deep() {
+    fn test_inner_deep_chain_pick_solution_valid() {
         use crate::pick_solution;
 
         let data: Vec<i64> = (0i64..16).cycle().take(16_000).collect();
         let info = OuterLayerInfo::new(&data, 0);
+        assert!(!info.solutions.is_empty(), "Must have at least one solution");
         let best = pick_solution(&info.solutions, 9.0);
-        let chosen_lookups = info.solutions[best].n_lookups();
+        assert!(best < info.solutions.len(), "pick_solution returned out-of-bounds index");
+        // The chosen solution should be far smaller than naive flat storage
+        // (16000 values × 4 bits = 8000 bytes).
         assert!(
-            chosen_lookups >= 3,
-            "High-compression should pick a deep solution, got {}",
-            chosen_lookups
+            info.solutions[best].cost() < 100,
+            "High-compression should pick a compact solution, got {} bytes",
+            info.solutions[best].cost()
         );
     }
 }
