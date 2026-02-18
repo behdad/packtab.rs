@@ -533,18 +533,16 @@ impl OuterLayerInfo {
         }
 
         // Bake in bias if it doesn't enlarge the type and doesn't introduce negatives.
-        // Don't bake if data is all zeros (constant), as InnerLayer optimizes that case to cost=0.
-        if bias != 0 && mult == 1 && *base.iter().min().unwrap() >= 0 && max_v != 0 {
+        // Guard on the *reduced* data being non-zero: if reduced is all-zeros, InnerLayer
+        // optimizes it to cost=0, and baking in the bias would destroy that benefit.
+        let current_max = *reduced.iter().max().unwrap_or(&0);
+        if bias != 0 && mult == 1 && *base.iter().min().unwrap() >= 0 && current_max != 0 {
             let base_min = *base.iter().min().unwrap();
             let base_max = *base.iter().max().unwrap();
             let current_min = *reduced.iter().min().unwrap();
-            let current_max = *reduced.iter().max().unwrap();
             let current_type_width = binary_bits_for(current_min, current_max).max(8);
             let base_type_width = binary_bits_for(base_min, base_max).max(8);
-            // Only bake in if the reduced data is not all-zeros. When it is
-            // all-zeros the InnerLayer constant optimisation gives cost=0;
-            // baking in the bias would destroy that benefit.
-            if base_type_width <= current_type_width && current_max != 0 {
+            if base_type_width <= current_type_width {
                 reduced = base.clone();
                 unit_bits = binary_bits_for(base_min, base_max);
                 bias = 0;
