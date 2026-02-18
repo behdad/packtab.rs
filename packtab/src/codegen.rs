@@ -261,7 +261,7 @@ fn gen_inner_code(
     };
 
     let index1 = if mask != 0 {
-        format!("(({}){}&{})", var, "", mask)
+        format!("(({})&{})", var, mask)
     } else {
         String::new()
     };
