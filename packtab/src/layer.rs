@@ -167,161 +167,78 @@ impl InnerLayerChain {
     fn build_solutions(&mut self) {
         let n_layers = self.layers.len();
 
-        // For each layer, if maxV == 0, it contributes a zero-cost solution.
-        // The deepest layer with maxV == 0 gives a constant solution.
-        // Point to the *actual* constant layer (n_layers-1) so that
-        // root_solutions() (which filters layer_idx==0) only includes it
-        // when the root itself is constant (n_layers==1).  For deeper
-        // constant layers the solution is referenced as a child only.
-        if self.layers[n_layers - 1].max_v == 0 {
-            self.solutions.push(InnerSolution {
-                layer_idx: n_layers - 1,
-                next: None,
-                n_lookups: 0,
-                n_extra_ops: 0,
-                cost: 0,
-                bits: 0,
-            });
-        }
+        // Build solutions bottom-up, matching Python's InnerLayer.__init__ recursive approach.
+        //
+        // For each layer k (processed deepest-first), build all solutions rooted at k:
+        //   - Constant layer (max_v == 0): one zero-cost, zero-lookup solution.
+        //   - Non-constant layer: flat 1-lookup solution, plus for every descendant
+        //     layer j > k, wrap each of j's solutions with an expansion table of
+        //     `bits = j - k` at layer k.
+        //
+        // This correctly generates 4-lookup, 5-lookup, … solutions for deep chains,
+        // which the old explicit 2-level loop missed.
 
-        // The root layer's flat solution (1 lookup, no split).
-        if self.layers[0].max_v != 0 {
-            let root = &self.layers[0];
-            self.solutions.push(InnerSolution {
-                layer_idx: 0,
-                next: None,
-                n_lookups: 1,
-                n_extra_ops: root.extra_ops,
-                cost: root.bytes,
-                bits: 0,
-            });
-        }
+        // Per-layer solution index lists (indices into self.solutions).
+        let mut layer_sol_indices: Vec<Vec<usize>> = vec![Vec::new(); n_layers];
 
-        // For each child layer depth, combine child solutions with root's expansion cost.
-        let root_unit_bits = self.layers[0].unit_bits;
-        let root_extra_ops = self.layers[0].extra_ops;
-        let mut bits: u8 = 1;
-
-        for child_idx in 1..n_layers {
-            let child = &self.layers[child_idx];
-            let extra_cost = ((child.max_v as usize + 1) * (1usize << bits) * root_unit_bits as usize + 7) / 8;
-
-            // Collect child layer's own solutions (flat + deeper splits).
-            // First, the child's flat solution:
-            let child_flat_base = self.solutions.len();
-
-            if child.max_v == 0 {
-                // Child is all-zero: 0 lookups, 0 cost
+        for k in (0..n_layers).rev() {
+            if self.layers[k].max_v == 0 {
+                // Constant: zero-cost, zero-lookup solution.
+                let idx = self.solutions.len();
                 self.solutions.push(InnerSolution {
-                    layer_idx: 0,
-                    next: Some(child_flat_base), // self-referential placeholder
-                    n_lookups: 0 + 1,
-                    n_extra_ops: 0 + root_extra_ops,
-                    cost: 0 + extra_cost,
-                    bits,
-                });
-                // Fix: the "next" should point to the constant solution
-                // which is index 0 (the zero-cost constant solution).
-                self.solutions.last_mut().unwrap().next = Some(0);
-            } else {
-                // Child's flat solution
-                let child_sol_idx = self.solutions.len();
-                self.solutions.push(InnerSolution {
-                    layer_idx: child_idx,
+                    layer_idx: k,
                     next: None,
-                    n_lookups: 1,
-                    n_extra_ops: child.extra_ops,
-                    cost: child.bytes,
+                    n_lookups: 0,
+                    n_extra_ops: 0,
+                    cost: 0,
                     bits: 0,
                 });
+                layer_sol_indices[k].push(idx);
+            } else {
+                let unit_bits = self.layers[k].unit_bits as usize;
+                let extra_ops_k = self.layers[k].extra_ops;
+                let bytes_k = self.layers[k].bytes;
 
-                // Wrap child's flat solution at root level
+                // Flat solution: one lookup directly into this layer's data.
+                let flat_idx = self.solutions.len();
                 self.solutions.push(InnerSolution {
-                    layer_idx: 0,
-                    next: Some(child_sol_idx),
-                    n_lookups: 1 + 1,
-                    n_extra_ops: child.extra_ops + root_extra_ops,
-                    cost: child.bytes + extra_cost,
-                    bits,
+                    layer_idx: k,
+                    next: None,
+                    n_lookups: 1,
+                    n_extra_ops: extra_ops_k,
+                    cost: bytes_k,
+                    bits: 0,
                 });
-            }
+                layer_sol_indices[k].push(flat_idx);
 
-            // Now for deeper children: if child_idx + 1 < n_layers,
-            // the child itself has children that form deeper solutions.
-            // We need to recursively consider all depths from child_idx onward.
-            let mut sub_bits: u8 = 1;
-            for grandchild_idx in (child_idx + 1)..n_layers {
-                let grandchild = &self.layers[grandchild_idx];
-                let child_unit_bits = self.layers[child_idx].unit_bits;
-                let child_extra_ops = self.layers[child_idx].extra_ops;
-                let sub_extra_cost = ((grandchild.max_v as usize + 1)
-                    * (1usize << sub_bits)
-                    * child_unit_bits as usize
-                    + 7)
-                    / 8;
+                // For each descendant layer j, wrap its solutions at layer k.
+                // bits = j - k is the shift depth for the expansion table at k.
+                for j in (k + 1)..n_layers {
+                    let bits = (j - k) as u8;
+                    let desc_max_v = self.layers[j].max_v as usize;
+                    // Cost of the expansion table stored at layer k.
+                    let extra_cost =
+                        ((desc_max_v + 1) * (1usize << bits) * unit_bits + 7) / 8;
 
-                if grandchild.max_v == 0 {
-                    // Grandchild constant → child solution with sub_bits split
-                    let gc_const_idx = self.solutions.len();
-                    self.solutions.push(InnerSolution {
-                        layer_idx: child_idx,
-                        next: None, // constant grandchild (inline zero)
-                        n_lookups: 0 + 1,
-                        n_extra_ops: 0 + child_extra_ops,
-                        cost: 0 + sub_extra_cost,
-                        bits: sub_bits,
-                    });
-                    // Actually, the constant solution for grandchild should
-                    // have 0 lookups. The child wrapping it adds 1 lookup.
-                    // Then root wrapping that adds 1 more.
-
-                    // Wrap at root level
-                    self.solutions.push(InnerSolution {
-                        layer_idx: 0,
-                        next: Some(gc_const_idx),
-                        n_lookups: 1 + 1,
-                        n_extra_ops: child_extra_ops + root_extra_ops,
-                        cost: sub_extra_cost + extra_cost,
-                        bits,
-                    });
-                } else {
-                    // Grandchild flat solution
-                    let gc_flat_idx = self.solutions.len();
-                    self.solutions.push(InnerSolution {
-                        layer_idx: grandchild_idx,
-                        next: None,
-                        n_lookups: 1,
-                        n_extra_ops: grandchild.extra_ops,
-                        cost: grandchild.bytes,
-                        bits: 0,
-                    });
-
-                    // Wrap at child level
-                    let child_wrapped_idx = self.solutions.len();
-                    self.solutions.push(InnerSolution {
-                        layer_idx: child_idx,
-                        next: Some(gc_flat_idx),
-                        n_lookups: 1 + 1,
-                        n_extra_ops: grandchild.extra_ops + child_extra_ops,
-                        cost: grandchild.bytes + sub_extra_cost,
-                        bits: sub_bits,
-                    });
-
-                    // Wrap at root level
-                    self.solutions.push(InnerSolution {
-                        layer_idx: 0,
-                        next: Some(child_wrapped_idx),
-                        n_lookups: 1 + 1 + 1,
-                        n_extra_ops: grandchild.extra_ops + child_extra_ops + root_extra_ops,
-                        cost: grandchild.bytes + sub_extra_cost + extra_cost,
-                        bits,
-                    });
+                    let desc_indices = layer_sol_indices[j].clone();
+                    for child_sol_idx in desc_indices {
+                        let (nl, nops, c) = {
+                            let child = &self.solutions[child_sol_idx];
+                            (child.n_lookups, child.n_extra_ops, child.cost)
+                        };
+                        let new_idx = self.solutions.len();
+                        self.solutions.push(InnerSolution {
+                            layer_idx: k,
+                            next: Some(child_sol_idx),
+                            n_lookups: nl + 1,
+                            n_extra_ops: nops + extra_ops_k,
+                            cost: c + extra_cost,
+                            bits,
+                        });
+                        layer_sol_indices[k].push(new_idx);
+                    }
                 }
-
-                sub_bits += 1;
             }
-
-            bits += 1;
         }
     }
 
@@ -874,5 +791,127 @@ mod tests {
         let data: Vec<i64> = (0..8).map(|i| 100 + i).collect();
         let layer = OuterLayerInfo::new(&data, 0);
         assert!(layer.identity);
+    }
+
+    // ── Deep-chain tests (4-lookup+ solutions) ──────────────────────────────
+    //
+    // For these tests we use a repeating 0..16 pattern over 16 000 elements.
+    // With 16 unique pair patterns the chain builds 5 inner layers (layers 0-4,
+    // where layer 4 is the all-zero constant).  The large data size (16 000
+    // values = 8 000 bytes at layer 0) means the byte savings from deep
+    // splitting far outweigh the extra lookup overhead, so all four lookup
+    // depths survive Pareto pruning.
+
+    fn deep_chain_data() -> Vec<i64> {
+        // (0..16) repeated 1000 times → 16 000 elements, 5 inner layers.
+        (0i64..16).cycle().take(16_000).collect()
+    }
+
+    #[test]
+    fn test_inner_deep_chain_debug() {
+        let chain = InnerLayerChain::new(deep_chain_data());
+        println!("n_layers = {}", chain.layers.len());
+        for (i, l) in chain.layers.iter().enumerate() {
+            println!("  layer[{}]: max_v={}, unit_bits={}, bytes={}", i, l.max_v, l.unit_bits, l.bytes);
+        }
+        println!("n_solutions = {}", chain.solutions.len());
+        let root_idxs = chain.root_solutions();
+        println!("n_root_solutions = {}", root_idxs.len());
+        for &i in &root_idxs {
+            let s = &chain.solutions[i];
+            println!("  root[{}]: layer_idx={}, nl={}, fc={}", i, s.layer_idx, s.n_lookups, s.full_cost());
+        }
+    }
+
+    /// The old build_solutions only reached 3-lookup solutions; the new
+    /// bottom-up algorithm must produce at least one 4-lookup solution.
+    #[test]
+    fn test_inner_deep_chain_has_four_lookups() {
+        let chain = InnerLayerChain::new(deep_chain_data());
+        let root_idxs = chain.root_solutions();
+        let max_lookups = root_idxs
+            .iter()
+            .map(|&i| chain.solutions[i].n_lookups)
+            .max()
+            .unwrap_or(0);
+        assert!(
+            max_lookups >= 4,
+            "Expected >=4-lookup solution for 5-layer chain, got max {}",
+            max_lookups
+        );
+    }
+
+    /// All root solutions for a deep chain must be Pareto-optimal.
+    #[test]
+    fn test_inner_deep_chain_pareto_optimal() {
+        let chain = InnerLayerChain::new(deep_chain_data());
+        let root_idxs = chain.root_solutions();
+        for &a in &root_idxs {
+            for &b in &root_idxs {
+                if a == b {
+                    continue;
+                }
+                let sa = &chain.solutions[a];
+                let sb = &chain.solutions[b];
+                assert!(
+                    !(sa.n_lookups <= sb.n_lookups && sa.full_cost() <= sb.full_cost()),
+                    "Solution (nl={}, fc={}) dominates (nl={}, fc={})",
+                    sa.n_lookups,
+                    sa.full_cost(),
+                    sb.n_lookups,
+                    sb.full_cost()
+                );
+            }
+        }
+    }
+
+    /// Root solutions must be sorted by n_lookups ascending.
+    #[test]
+    fn test_inner_deep_chain_lookups_sorted() {
+        let chain = InnerLayerChain::new(deep_chain_data());
+        let root_idxs = chain.root_solutions();
+        let lookups: Vec<usize> = root_idxs
+            .iter()
+            .map(|&i| chain.solutions[i].n_lookups)
+            .collect();
+        let mut sorted = lookups.clone();
+        sorted.sort();
+        assert_eq!(lookups, sorted, "Root solutions not sorted by n_lookups");
+    }
+
+    /// When sorted by n_lookups, full_cost must strictly decrease
+    /// (otherwise dominated solutions would have survived pruning).
+    #[test]
+    fn test_inner_deep_chain_cost_strictly_decreases() {
+        let chain = InnerLayerChain::new(deep_chain_data());
+        let root_idxs = chain.root_solutions();
+        let mut prev_cost = usize::MAX;
+        for &i in &root_idxs {
+            let fc = chain.solutions[i].full_cost();
+            assert!(
+                fc < prev_cost,
+                "full_cost did not strictly decrease: {} >= {}",
+                fc,
+                prev_cost
+            );
+            prev_cost = fc;
+        }
+    }
+
+    /// With high compression the deepest (lowest byte-cost) solution must be
+    /// chosen.  For the 5-layer repeating data this is the 4-lookup solution.
+    #[test]
+    fn test_inner_deep_chain_high_compression_picks_deep() {
+        use crate::pick_solution;
+
+        let data: Vec<i64> = (0i64..16).cycle().take(16_000).collect();
+        let info = OuterLayerInfo::new(&data, 0);
+        let best = pick_solution(&info.solutions, 9.0);
+        let chosen_lookups = info.solutions[best].n_lookups();
+        assert!(
+            chosen_lookups >= 3,
+            "High-compression should pick a deep solution, got {}",
+            chosen_lookups
+        );
     }
 }
