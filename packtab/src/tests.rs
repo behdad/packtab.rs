@@ -1,5 +1,5 @@
 use crate::codegen::Language;
-use crate::layer::{AnyOuterSolution, InnerLayerChain, OuterLayerInfo};
+use crate::layer::{InnerLayerChain, OuterLayerInfo};
 use crate::{generate, pack_table, pack_table_all, pick_solution};
 use std::process::Command;
 
