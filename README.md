@@ -18,7 +18,7 @@ level2[level1[level0[index >> K] + (index & mask)]]
 ```
 
 The algorithm applies arithmetic reductions (bias subtraction, GCD
-factoring, identity subtraction) before the multi-level split to shrink
+factoring) before the multi-level split to shrink
 the value range, enabling tighter sub-byte packing. A Pareto-optimal
 set of solutions is computed, trading off table size vs. lookup speed.
 
@@ -140,8 +140,6 @@ The algorithm has two layers:
   in generated code.
 - **GCD factoring**: if all values share a common factor M, divide them
   out and multiply back.
-- **Identity subtraction**: for near-linear data (data[i] ~ i), store
-  residuals data[i] - i.
 - **Bake-in optimizations**: if the mult/bias can be folded into the
   stored values without widening the integer type, do so to save a
   runtime operation.

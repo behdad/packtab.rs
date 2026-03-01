@@ -198,21 +198,6 @@ e2e_test!(test_gcd_no_bake_in, vec![0, 128, 256, 384], 0);
 e2e_test!(test_gcd_with_bias, vec![100, 106, 112, 118], 0);
 e2e_test!(test_bias_bake_in, vec![100, 101, 102, 103, 104, 105], 0);
 e2e_test!(test_bias_no_bake_in, vec![1000, 1001, 1002, 1003], 0);
-e2e_test!(test_identity, (0..64).collect(), 0);
-e2e_test!(test_identity_with_exceptions, {
-    let mut d: Vec<i64> = (0..32).collect();
-    d[10] = 99;
-    d[20] = 200;
-    d
-}, 0);
-e2e_test!(test_identity_negative_deltas, vec![0, 1, 2, 3, 5, 4, 6, 7], 0);
-e2e_test!(test_identity_large_mirroring, {
-    let mut d: Vec<i64> = (0..256).collect();
-    d[40] = 41; d[41] = 40;
-    d[60] = 62; d[62] = 60;
-    d[91] = 93; d[93] = 91;
-    d
-}, 0);
 
 // ── Rust-specific tests ─────────────────────────────────────────
 
@@ -331,7 +316,6 @@ fn test_mult_no_bake_in_has_mult_in_code() {
 
 #[test]
 fn test_bias_bake_in_small() {
-    // Use non-linear data so identity optimization doesn't interfere
     let info = OuterLayerInfo::new(&[100, 105, 110, 115], 0);
     assert_eq!(info.bias, 0);
 }
@@ -344,7 +328,6 @@ fn test_bias_no_bake_in_type_change() {
 
 #[test]
 fn test_bias_bake_in_no_bias_in_code() {
-    // Use non-linear data so identity optimization doesn't interfere
     let code = gen(&[200, 205, 210, 215], 0, Language::C);
     assert!(!code.contains("200+"), "Bias should be baked in");
 }
@@ -353,28 +336,6 @@ fn test_bias_bake_in_no_bias_in_code() {
 fn test_bias_no_bake_in_has_bias_in_code() {
     let code = gen(&[1000, 1005, 1010, 1015], 0, Language::C);
     assert!(code.contains("1000+"), "Bias should be in generated code");
-}
-
-// ── Identity tests ──────────────────────────────────────────────
-
-#[test]
-fn test_identity_chosen_for_linear() {
-    let data: Vec<i64> = (0..16).collect();
-    let info = OuterLayerInfo::new(&data, 0);
-    assert!(info.identity);
-}
-
-#[test]
-fn test_identity_not_chosen_for_nonlinear() {
-    let info = OuterLayerInfo::new(&[0, 5, 10, 15], 0);
-    assert!(!info.identity);
-}
-
-#[test]
-fn test_identity_with_offset() {
-    let data: Vec<i64> = (0..8).map(|i| 100 + i).collect();
-    let info = OuterLayerInfo::new(&data, 0);
-    assert!(info.identity);
 }
 
 // ── Cache optimization tests ────────────────────────────────────────
@@ -543,20 +504,17 @@ fn test_palette_generated_for_outlier() {
 
 #[test]
 fn test_palette_skipped_all_unique() {
-    // After identity reduction, all values become 0; no palette benefit.
     let data: Vec<i64> = (0..100).collect();
     let info = pack_table_all(&data, 0);
 
     assert!(
         !info.solutions.iter().any(|s| s.is_palette()),
-        "should not have palette solutions when all values unique (after reduction)"
+        "should not have palette solutions when all values unique"
     );
 }
 
 #[test]
 fn test_palette_skipped_no_savings() {
-    // 16 unique values: after identity reduction the data is all-zeros,
-    // so index_bits == value_bits and palette is skipped.
     let data: Vec<i64> = (0..16).collect();
     let info = pack_table_all(&data, 0);
 

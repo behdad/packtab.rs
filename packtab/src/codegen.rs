@@ -380,28 +380,10 @@ fn gen_outer_code(
         expr = format!("{}*{}", outer_info.mult, expr);
     }
 
-    // Apply identity + bias.
-    if outer_info.identity {
-        expr = wrapping_add(&cast(var, ret_type, lang), &expr, lang);
-        if outer_info.bias > 0 {
-            expr = wrapping_add(
-                &uint_literal(outer_info.bias as u64, ret_type, lang),
-                &expr,
-                lang,
-            );
-        } else if outer_info.bias < 0 {
-            expr = wrapping_sub(
-                &expr,
-                &uint_literal((-outer_info.bias) as u64, ret_type, lang),
-                lang,
-            );
-        }
-    } else {
-        if outer_info.bias > 0 {
-            expr = format!("{}+{}", outer_info.bias, expr);
-        } else if outer_info.bias < 0 {
-            expr = format!("{}-{}", expr, -outer_info.bias);
-        }
+    if outer_info.bias > 0 {
+        expr = format!("{}+{}", outer_info.bias, expr);
+    } else if outer_info.bias < 0 {
+        expr = format!("{}-{}", expr, -outer_info.bias);
     }
 
     // Bounds check with default.
@@ -470,28 +452,10 @@ fn gen_palette_outer_code(
         expr = format!("{}*{}", outer_info.mult, expr);
     }
 
-    // Apply identity + bias.
-    if outer_info.identity {
-        expr = wrapping_add(&cast(var, ret_type, lang), &expr, lang);
-        if outer_info.bias > 0 {
-            expr = wrapping_add(
-                &uint_literal(outer_info.bias as u64, ret_type, lang),
-                &expr,
-                lang,
-            );
-        } else if outer_info.bias < 0 {
-            expr = wrapping_sub(
-                &expr,
-                &uint_literal((-outer_info.bias) as u64, ret_type, lang),
-                lang,
-            );
-        }
-    } else {
-        if outer_info.bias > 0 {
-            expr = format!("{}+{}", outer_info.bias, expr);
-        } else if outer_info.bias < 0 {
-            expr = format!("{}-{}", expr, -outer_info.bias);
-        }
+    if outer_info.bias > 0 {
+        expr = format!("{}+{}", outer_info.bias, expr);
+    } else if outer_info.bias < 0 {
+        expr = format!("{}-{}", expr, -outer_info.bias);
     }
 
     // Bounds check with default.
@@ -789,19 +753,5 @@ fn ternary(cond: &str, true_expr: &str, false_expr: &str, lang: Language) -> Str
     match lang {
         Language::C => format!("{} ? {} : {}", cond, true_expr, false_expr),
         Language::Rust { .. } => format!("if {} {{ {} }} else {{ {} }}", cond, true_expr, false_expr),
-    }
-}
-
-fn wrapping_add(a: &str, b: &str, lang: Language) -> String {
-    match lang {
-        Language::C => format!("{}+{}", a, b),
-        Language::Rust { .. } => format!("({}).wrapping_add({})", a, b),
-    }
-}
-
-fn wrapping_sub(a: &str, b: &str, lang: Language) -> String {
-    match lang {
-        Language::C => format!("{}-{}", a, b),
-        Language::Rust { .. } => format!("({}).wrapping_sub({})", a, b),
     }
 }

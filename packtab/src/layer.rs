@@ -428,7 +428,6 @@ pub struct OuterLayerInfo {
     pub min_v: i64,
     pub max_v: i64,
     pub unit_bits: u8,
-    pub identity: bool,
     pub bias: i64,
     pub mult: i64,
     pub extra_ops: usize,
@@ -494,29 +493,10 @@ impl OuterLayerInfo {
         let min_v = *data.iter().min().unwrap();
         let max_v = *data.iter().max().unwrap();
 
-        let mut identity = false;
-
         let (mut unit_bits, mut bias, mut mult) = best_reduction(&data, min_v, max_v);
 
-        // Try identity subtraction: store data[i] - i.
-        let deltas: Vec<i64> = data.iter().enumerate().map(|(i, &d)| d - i as i64).collect();
-        let d_min = *deltas.iter().min().unwrap();
-        let d_max = *deltas.iter().max().unwrap();
-        let (id_ub, id_b, id_m) = best_reduction(&deltas, d_min, d_max);
-
-        if id_ub < unit_bits {
-            unit_bits = id_ub;
-            bias = id_b;
-            mult = id_m;
-            identity = true;
-        }
-
         // Compute reduced values for InnerLayer.
-        let base: Vec<i64> = if identity {
-            deltas
-        } else {
-            data.clone()
-        };
+        let base: Vec<i64> = data.clone();
         let mut reduced: Vec<i64> = base.iter().map(|&d| (d - bias) / mult).collect();
 
         // Bake in width multiplier if it doesn't enlarge the C integer type.
@@ -557,9 +537,6 @@ impl OuterLayerInfo {
 
         let extra_ops_base = if unit_bits < 8 { SUB_BYTE_ACCESS_OPS } else { 0 };
         let mut extra_ops = extra_ops_base;
-        if identity {
-            extra_ops += 1;
-        }
         if bias != 0 {
             extra_ops += 1;
         }
@@ -598,7 +575,6 @@ impl OuterLayerInfo {
             min_v,
             max_v,
             unit_bits,
-            identity,
             bias,
             mult,
             extra_ops,
@@ -744,7 +720,6 @@ mod tests {
     #[test]
     fn test_outer_bias_optimization() {
         // bias gets baked in when original data fits in same type
-        // Use non-linear data so identity optimization doesn't interfere
         let layer = OuterLayerInfo::new(&[100, 105, 110, 115], 0);
         assert_eq!(layer.bias, 0);
 
@@ -768,26 +743,6 @@ mod tests {
     fn test_outer_has_solutions() {
         let layer = OuterLayerInfo::new(&[1, 2, 3], 0);
         assert!(!layer.solutions.is_empty());
-    }
-
-    #[test]
-    fn test_identity_chosen_for_linear_data() {
-        let data: Vec<i64> = (0..16).collect();
-        let layer = OuterLayerInfo::new(&data, 0);
-        assert!(layer.identity);
-    }
-
-    #[test]
-    fn test_identity_not_chosen_for_nonlinear() {
-        let layer = OuterLayerInfo::new(&[0, 5, 10, 15], 0);
-        assert!(!layer.identity);
-    }
-
-    #[test]
-    fn test_identity_with_offset() {
-        let data: Vec<i64> = (0..8).map(|i| 100 + i).collect();
-        let layer = OuterLayerInfo::new(&data, 0);
-        assert!(layer.identity);
     }
 
     // ── Deep-chain tests ────────────────────────────────────────────────────
