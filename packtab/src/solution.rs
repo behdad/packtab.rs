@@ -33,6 +33,8 @@ impl InnerSolution {
 pub struct OuterSolution {
     /// Index of the InnerSolution this wraps (in the chain's solutions vec).
     pub inner_idx: usize,
+    /// Number of index bits consumed at the outermost inner level.
+    pub bits: u8,
     pub n_lookups: usize,
     pub n_extra_ops: usize,
     pub cost: usize,

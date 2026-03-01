@@ -27,7 +27,7 @@ struct Cli {
     #[arg(long, default_value = "0")]
     default: i64,
 
-    /// Size vs speed tradeoff; higher = smaller tables.
+    /// Size vs speed tradeoff: 0 = flat, 1..9 = heuristic, 10 = minimum bytes.
     /// For C: use '1,9' to generate both variants with #ifdef __OPTIMIZE_SIZE__.
     #[arg(long, default_value = "1")]
     compression: String,

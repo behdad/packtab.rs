@@ -65,7 +65,7 @@ Options:
       --rust                   Shorthand for --language=rust
       --unsafe                 Use unsafe array access (Rust only)
       --default <DEFAULT>      Default value for out-of-range indices [default: 0]
-      --compression <COMPRESSION>  Size vs speed tradeoff; higher = smaller tables [default: 1]
+      --compression <COMPRESSION>  Size vs speed tradeoff: 0 = flat, 1..9 = heuristic, 10 = minimum bytes [default: 1]
       --name <NAME>            Namespace prefix for generated symbols [default: data]
 ```
 
@@ -117,7 +117,7 @@ inline lookup function.
 ### Options
 
 - **`default`** (required): Value returned for out-of-range indices.
-- **`compression`** (optional): Size vs speed tradeoff; higher = smaller tables. Default `1.0`.
+- **`compression`** (optional): `0` prefers flat encoding, `1..9` use the size/speed heuristic, and `10` minimizes raw table bytes. Default `1.0`.
 - **`unsafe`** (optional): When `true`, uses `get_unchecked` for array accesses. Default `false`.
 
 ```rust

@@ -112,15 +112,21 @@ fn test_pick_solution_returns_index() {
 }
 
 #[test]
-fn test_high_compression_prefers_smaller() {
+fn test_compression_zero_picks_flat_solution() {
     let info = pack_table_all(&(0..64).collect::<Vec<_>>(), 0);
-    let small = pick_solution(&info.solutions, 10.0);
-    let fast = pick_solution(&info.solutions, 0.01);
-    let small_s = &info.solutions[small];
-    let fast_s = &info.solutions[fast];
-    assert!(
-        small_s.full_cost() <= fast_s.full_cost()
-            || small_s.n_lookups() >= fast_s.n_lookups()
+    let best = pick_solution(&info.solutions, 0.0);
+    let solution = &info.solutions[best];
+    assert!(!solution.is_palette());
+    assert_eq!(solution.bits(), Some(0));
+}
+
+#[test]
+fn test_compression_ten_picks_minimum_raw_cost() {
+    let info = pack_table_all(&(0..64).collect::<Vec<_>>(), 0);
+    let best = pick_solution(&info.solutions, 10.0);
+    assert_eq!(
+        info.solutions[best].cost(),
+        info.solutions.iter().map(|s| s.cost()).min().unwrap()
     );
 }
 

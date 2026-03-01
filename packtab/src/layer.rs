@@ -410,6 +410,12 @@ impl AnyOuterSolution {
     pub fn is_palette(&self) -> bool {
         matches!(self, AnyOuterSolution::Palette(_))
     }
+    pub fn bits(&self) -> Option<u8> {
+        match self {
+            AnyOuterSolution::Direct(s) => Some(s.bits),
+            AnyOuterSolution::Palette(_) => None,
+        }
+    }
 }
 
 /// Arithmetic preprocessing result.
@@ -573,6 +579,7 @@ impl OuterLayerInfo {
             let s = &inner.solutions[sol_idx];
             solutions.push(AnyOuterSolution::Direct(OuterSolution {
                 inner_idx: sol_idx,
+                bits: s.bits,
                 n_lookups: s.n_lookups,
                 n_extra_ops: s.n_extra_ops + extra_ops,
                 cost: s.cost,

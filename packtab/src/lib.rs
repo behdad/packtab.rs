@@ -30,10 +30,37 @@ pub fn pack_table_all(data: &[i64], default: i64) -> OuterLayerInfo {
 
 /// Select the best solution from the Pareto frontier.
 ///
-/// The `compression` parameter controls the tradeoff:
-/// - Higher values prefer smaller tables (more compression).
-/// - Lower values prefer fewer lookups (faster access).
+/// The `compression` parameter controls the tradeoff.
+/// Values 1..9 use the historical heuristic.
+/// Values <= 0 pick a flat / unsplit solution when available.
+/// Values >= 10 minimize raw table bytes.
 pub fn pick_solution(solutions: &[AnyOuterSolution], compression: f64) -> usize {
+    if compression <= 0.0 {
+        if let Some((i, _)) = solutions
+            .iter()
+            .enumerate()
+            .filter(|(_, s)| !s.is_palette() && s.bits() == Some(0))
+            .min_by_key(|(_, s)| (s.n_extra_ops(), s.cost()))
+        {
+            return i;
+        }
+        return solutions
+            .iter()
+            .enumerate()
+            .min_by_key(|(_, s)| (s.n_lookups(), s.n_extra_ops(), s.cost()))
+            .map(|(i, _)| i)
+            .unwrap();
+    }
+
+    if compression >= 10.0 {
+        return solutions
+            .iter()
+            .enumerate()
+            .min_by_key(|(_, s)| (s.cost(), s.n_lookups(), s.n_extra_ops()))
+            .map(|(i, _)| i)
+            .unwrap();
+    }
+
     solutions
         .iter()
         .enumerate()
