@@ -458,6 +458,10 @@ fn aligned_base_for_live_range(data: &[i64], default: i64) -> usize {
     first & !mask
 }
 
+fn first_non_default_index(data: &[i64], default: i64) -> Option<usize> {
+    data.iter().position(|&v| v != default)
+}
+
 /// Find the (unitBits, bias, mult) triple that minimizes unitBits.
 fn best_reduction(values: &[i64], min_v: i64, max_v: i64) -> (u8, i64, i64) {
     let mut bias: i64 = 0;
@@ -500,8 +504,12 @@ fn best_reduction(values: &[i64], min_v: i64, max_v: i64) -> (u8, i64, i64) {
 
 impl OuterLayerInfo {
     pub fn new(data: &[i64], default: i64) -> Self {
+        let base = aligned_base_for_live_range(data, default);
+        Self::with_base(data, default, base)
+    }
+
+    pub fn with_base(data: &[i64], default: i64, base: usize) -> Self {
         let mut data = data.to_vec();
-        let base = aligned_base_for_live_range(&data, default);
         data = data[base..].to_vec();
         // Strip trailing default values.
         while data.len() > 1 && *data.last().unwrap() == default {
@@ -603,6 +611,23 @@ impl OuterLayerInfo {
             palette_inner: palette_inner_opt,
             solutions,
         }
+    }
+
+    pub fn exact_inline_candidate(data: &[i64], default: i64) -> Option<Self> {
+        let first = first_non_default_index(data, default)?;
+        let aligned = aligned_base_for_live_range(data, default);
+        if first == aligned {
+            return None;
+        }
+
+        let candidate = Self::with_base(data, default, first);
+        let inline_exact = candidate.bytes <= 8
+            && candidate.min_v >= 0
+            && candidate
+                .solutions
+                .iter()
+                .any(|s| !s.is_palette() && s.bits() == Some(0));
+        inline_exact.then_some(candidate)
     }
 }
 
@@ -747,6 +772,20 @@ mod tests {
     fn test_outer_keeps_zero_base_when_live_range_crosses_aligned_block() {
         let layer = OuterLayerInfo::new(&[0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1], 0);
         assert_eq!(layer.base, 0);
+    }
+
+    #[test]
+    fn test_exact_inline_candidate_uses_first_non_default() {
+        let layer = OuterLayerInfo::exact_inline_candidate(&[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 2, 3, 4], 0)
+            .expect("expected exact inline candidate");
+        assert_eq!(layer.base, 17);
+    }
+
+    #[test]
+    fn test_exact_inline_candidate_skips_non_inline_span() {
+        let mut data = vec![0; 17];
+        data.extend(0..32);
+        assert!(OuterLayerInfo::exact_inline_candidate(&data, 0).is_none());
     }
 
     #[test]

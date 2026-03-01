@@ -23,6 +23,8 @@ the value range, enabling tighter sub-byte packing. A Pareto-optimal
 set of solutions is computed, trading off table size vs. lookup speed.
 For sparse lookup tables with large power-of-two-aligned default prefixes,
 the stored span is rebased to skip the removable all-default prefix.
+When the exact live span is small enough to inline as a constant, the
+packer also tries an exact rebase to the first non-default index.
 
 Generated code can target **C** or **Rust**.
 

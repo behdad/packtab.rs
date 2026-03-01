@@ -131,6 +131,20 @@ fn test_compression_ten_picks_minimum_raw_cost() {
 }
 
 #[test]
+fn test_exact_leading_cull_used_when_trimmed_span_inlines() {
+    let data = [vec![0; 17], vec![1, 2, 3, 4]].concat();
+    let (info, _best) = pack_table(&data, 0, 10.0);
+    assert_eq!(info.base, 17);
+}
+
+#[test]
+fn test_exact_leading_cull_skipped_when_trimmed_span_would_not_inline() {
+    let data = [vec![0; 17], (0..32).collect::<Vec<i64>>()].concat();
+    let (info, _best) = pack_table(&data, 0, 10.0);
+    assert_ne!(info.base, 18);
+}
+
+#[test]
 #[should_panic]
 fn test_empty_data_panics() {
     pack_table(&[], 0, 1.0);
