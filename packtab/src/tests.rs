@@ -187,6 +187,13 @@ e2e_test!(test_sparse, {
     d[99] = 1;
     d
 }, 0);
+e2e_test!(test_sparse_with_aligned_prefix_defaults, {
+    let mut d = vec![0i64; 19];
+    d[16] = 5;
+    d[17] = 9;
+    d[18] = 11;
+    d
+}, 0);
 e2e_test!(test_large_values, vec![0, 1000, 2000, 3000, 4000, 5000], 0);
 e2e_test!(test_16bit_values, (0..64).map(|i| i * 100).collect(), 0);
 e2e_test!(test_nonzero_default, vec![5, 5, 5, 10, 5], 5);

@@ -21,6 +21,8 @@ The algorithm applies arithmetic reductions (bias subtraction, GCD
 factoring) before the multi-level split to shrink
 the value range, enabling tighter sub-byte packing. A Pareto-optimal
 set of solutions is computed, trading off table size vs. lookup speed.
+For sparse lookup tables with large power-of-two-aligned default prefixes,
+the stored span is rebased to skip the removable all-default prefix.
 
 Generated code can target **C** or **Rust**.
 

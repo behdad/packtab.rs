@@ -425,6 +425,8 @@ pub struct OuterLayerInfo {
     pub data: Vec<i64>,
     /// The default value for out-of-range indices.
     pub default: i64,
+    /// Base index for the rebased span in the original table.
+    pub base: usize,
     pub min_v: i64,
     pub max_v: i64,
     pub unit_bits: u8,
@@ -440,6 +442,20 @@ pub struct OuterLayerInfo {
     pub palette_inner: Option<InnerLayerChain>,
     /// All Pareto-frontier solutions (direct and palette interleaved).
     pub solutions: Vec<AnyOuterSolution>,
+}
+
+fn aligned_base_for_live_range(data: &[i64], default: i64) -> usize {
+    let Some(first) = data.iter().position(|&v| v != default) else {
+        return 0;
+    };
+    let last = data.iter().rposition(|&v| v != default).unwrap();
+    let differing_bits = first ^ last;
+    if differing_bits == 0 {
+        return first;
+    }
+
+    let mask = (1usize << ((differing_bits.ilog2() as usize) + 1)) - 1;
+    first & !mask
 }
 
 /// Find the (unitBits, bias, mult) triple that minimizes unitBits.
@@ -485,6 +501,8 @@ fn best_reduction(values: &[i64], min_v: i64, max_v: i64) -> (u8, i64, i64) {
 impl OuterLayerInfo {
     pub fn new(data: &[i64], default: i64) -> Self {
         let mut data = data.to_vec();
+        let base = aligned_base_for_live_range(&data, default);
+        data = data[base..].to_vec();
         // Strip trailing default values.
         while data.len() > 1 && *data.last().unwrap() == default {
             data.pop();
@@ -496,12 +514,12 @@ impl OuterLayerInfo {
         let (mut unit_bits, mut bias, mut mult) = best_reduction(&data, min_v, max_v);
 
         // Compute reduced values for InnerLayer.
-        let base: Vec<i64> = data.clone();
-        let mut reduced: Vec<i64> = base.iter().map(|&d| (d - bias) / mult).collect();
+        let base_data: Vec<i64> = data.clone();
+        let mut reduced: Vec<i64> = base_data.iter().map(|&d| (d - bias) / mult).collect();
 
         // Bake in width multiplier if it doesn't enlarge the C integer type.
         if mult > 1 {
-            let undivided: Vec<i64> = base.iter().map(|&d| d - bias).collect();
+            let undivided: Vec<i64> = base_data.iter().map(|&d| d - bias).collect();
             let divided_min = *reduced.iter().min().unwrap();
             let divided_max = *reduced.iter().max().unwrap();
             let undivided_min = *undivided.iter().min().unwrap();
@@ -522,14 +540,14 @@ impl OuterLayerInfo {
         // Guard on the *reduced* data being non-zero: if reduced is all-zeros, InnerLayer
         // optimizes it to cost=0, and baking in the bias would destroy that benefit.
         let current_max = *reduced.iter().max().unwrap_or(&0);
-        if bias != 0 && mult == 1 && *base.iter().min().unwrap() >= 0 && current_max != 0 {
-            let base_min = *base.iter().min().unwrap();
-            let base_max = *base.iter().max().unwrap();
+        if bias != 0 && mult == 1 && *base_data.iter().min().unwrap() >= 0 && current_max != 0 {
+            let base_min = *base_data.iter().min().unwrap();
+            let base_max = *base_data.iter().max().unwrap();
             let current_min = *reduced.iter().min().unwrap();
             let current_type_width = binary_bits_for(current_min, current_max).max(8);
             let base_type_width = binary_bits_for(base_min, base_max).max(8);
             if base_type_width <= current_type_width {
-                reduced = base.clone();
+                reduced = base_data.clone();
                 unit_bits = binary_bits_for(base_min, base_max);
                 bias = 0;
             }
@@ -572,6 +590,7 @@ impl OuterLayerInfo {
         OuterLayerInfo {
             data,
             default,
+            base,
             min_v,
             max_v,
             unit_bits,
@@ -715,6 +734,19 @@ mod tests {
     fn test_outer_strips_trailing_default() {
         let layer = OuterLayerInfo::new(&[1, 2, 3, 0, 0, 0], 0);
         assert_eq!(layer.data, vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn test_outer_culls_aligned_leading_defaults() {
+        let layer = OuterLayerInfo::new(&[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 2, 3], 0);
+        assert_eq!(layer.base, 16);
+        assert_eq!(layer.data, vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn test_outer_keeps_zero_base_when_live_range_crosses_aligned_block() {
+        let layer = OuterLayerInfo::new(&[0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1], 0);
+        assert_eq!(layer.base, 0);
     }
 
     #[test]

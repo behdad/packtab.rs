@@ -363,13 +363,18 @@ fn gen_outer_code(
 
     let typ = IntType::for_range(outer_info.min_v, outer_info.max_v);
     let ret_type = typ;
+    let lookup_var = if outer_info.base > 0 {
+        wrapping_sub(var, &usize_literal(outer_info.base, lang), lang)
+    } else {
+        var.to_string()
+    };
 
     // Generate inner code.
     let (_, inner_expr) = gen_inner_code(
         outer.inner_idx,
         &outer_info.inner,
         code_builder,
-        var,
+        &lookup_var,
         lang,
         1,
     );
@@ -389,7 +394,7 @@ fn gen_outer_code(
     // Bounds check with default.
     let default_str = format!("{}", outer_info.default);
     expr = ternary(
-        &format!("{}<{}", var, outer_info.data.len()),
+        &format!("{}<{}", lookup_var, usize_literal(outer_info.data.len(), lang)),
         &expr,
         &default_str,
         lang,
@@ -423,6 +428,11 @@ fn gen_palette_outer_code(
 
     let typ = IntType::for_range(outer_info.min_v, outer_info.max_v);
     let ret_type = typ;
+    let lookup_var = if outer_info.base > 0 {
+        wrapping_sub(var, &usize_literal(outer_info.base, lang), lang)
+    } else {
+        var.to_string()
+    };
 
     // Emit the palette array.
     let palette = &outer_info.palette;
@@ -437,7 +447,7 @@ fn gen_palette_outer_code(
         palette_sol.inner_idx,
         palette_inner,
         code_builder,
-        var,
+        &lookup_var,
         lang,
         1,
     );
@@ -461,7 +471,7 @@ fn gen_palette_outer_code(
     // Bounds check with default.
     let default_str = format!("{}", outer_info.default);
     expr = ternary(
-        &format!("{}<{}", var, outer_info.data.len()),
+        &format!("{}<{}", lookup_var, usize_literal(outer_info.data.len(), lang)),
         &expr,
         &default_str,
         lang,
@@ -703,6 +713,13 @@ fn usize_literal(value: usize, lang: Language) -> String {
     match lang {
         Language::C => format!("{}u", value),
         Language::Rust { .. } => format!("{}usize", value),
+    }
+}
+
+fn wrapping_sub(a: &str, b: &str, lang: Language) -> String {
+    match lang {
+        Language::C => format!("{}-{}", a, b),
+        Language::Rust { .. } => format!("({}).wrapping_sub({})", a, b),
     }
 }
 
