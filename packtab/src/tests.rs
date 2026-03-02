@@ -678,6 +678,8 @@ fn test_palette_code_generation_c() {
     let code = generate(&info, palette_idx, "data", Language::C);
     assert!(code.contains("palette"), "C output should contain 'palette'");
     assert!(code.contains("11110124"), "C output should contain the outlier value");
+    assert!(code.contains("/* packtab: "), "C output should contain a packtab shape comment");
+    assert!(code.contains("palette["), "C output should mention palette size in the shape comment");
 }
 
 #[test]
@@ -693,6 +695,20 @@ fn test_palette_code_generation_rust() {
     let code = generate(&info, palette_idx, "data", Language::Rust { unsafe_access: false });
     assert!(code.contains("palette"), "Rust output should contain 'palette'");
     assert!(code.contains("fn ") || code.contains("#[inline]"), "should contain a function");
+    assert!(code.contains("/* packtab: "), "Rust output should contain a packtab shape comment");
+}
+
+#[test]
+fn test_shape_comment_in_generated_function() {
+    let data = vec![0i64; 32]
+        .into_iter()
+        .chain([1, 2, 3, 4])
+        .collect::<Vec<_>>();
+    let (info, best) = pack_table(&data, 0, 10.0);
+    let code = generate(&info, best, "data", Language::C);
+    assert!(code.contains("/* packtab: "), "generated output should contain a packtab shape comment");
+    assert!(code.contains("base=32"), "shape comment should include the rebased base offset");
+    assert!(code.contains("[2^"), "shape comment should include the leaf-inclusive shape list");
 }
 
 #[test]

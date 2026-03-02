@@ -84,6 +84,7 @@ pub struct FuncDecl {
     pub ret_type: IntType,
     pub arg_name: String,
     pub body: String,
+    pub comment: Option<String>,
     pub private: bool,
     pub inline_always: bool,
 }

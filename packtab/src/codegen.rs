@@ -17,12 +17,63 @@ impl Language {
 
 }
 
+fn inner_shape_terms(sol_idx: usize, chain: &InnerLayerChain) -> Vec<String> {
+    let sol = &chain.solutions[sol_idx];
+    let mut terms = if let Some(next_idx) = sol.next {
+        inner_shape_terms(next_idx, chain)
+    } else {
+        Vec::new()
+    };
+    if sol.bits > 0 {
+        terms.push(format!("2^{}", sol.bits));
+    } else {
+        terms.push(format!("2^{}", chain.layers[sol.layer_idx].unit_bits));
+    }
+    terms
+}
+
+fn outer_shape_comment(outer: &OuterSolution, outer_info: &OuterLayerInfo) -> String {
+    let mut terms = Vec::new();
+    if outer_info.base > 0 {
+        terms.push(format!("base={}", outer_info.base));
+    }
+    terms.push(format!("[{}]", inner_shape_terms(outer.inner_idx, &outer_info.inner).join(",")));
+    if outer_info.mult != 1 {
+        terms.push(format!("*{}", outer_info.mult));
+    }
+    if outer_info.bias > 0 {
+        terms.push(format!("+{}", outer_info.bias));
+    } else if outer_info.bias < 0 {
+        terms.push(format!("-{}", -outer_info.bias));
+    }
+    format!("packtab: {}", terms.join(" "))
+}
+
+fn palette_shape_comment(palette_sol: &PaletteOuterSolution, outer_info: &OuterLayerInfo) -> String {
+    let mut terms = Vec::new();
+    if outer_info.base > 0 {
+        terms.push(format!("base={}", outer_info.base));
+    }
+    let palette_inner = outer_info.palette_inner.as_ref().unwrap();
+    terms.push(format!("[{}]", inner_shape_terms(palette_sol.inner_idx, palette_inner).join(",")));
+    terms.push(format!("palette[{}]", outer_info.palette.len()));
+    if outer_info.mult != 1 {
+        terms.push(format!("*{}", outer_info.mult));
+    }
+    if outer_info.bias > 0 {
+        terms.push(format!("+{}", outer_info.bias));
+    } else if outer_info.bias < 0 {
+        terms.push(format!("-{}", -outer_info.bias));
+    }
+    format!("packtab: {}", terms.join(" "))
+}
+
 /// Accumulated code state during generation (mirrors Python's Code class).
 struct CodeBuilder {
     namespace: String,
     arrays: Vec<(String, IntType, Vec<i64>)>,
     array_offsets: std::collections::HashMap<String, usize>,
-    functions: Vec<(String, IntType, String, String, bool, bool)>,
+    functions: Vec<(String, IntType, String, String, Option<String>, bool, bool)>,
     function_set: std::collections::HashSet<String>,
     accessors: std::collections::HashSet<u8>,
 }
@@ -93,6 +144,7 @@ impl CodeBuilder {
         name: &str,
         arg_name: &str,
         body: &str,
+        comment: Option<String>,
         private: bool,
         inline_always: bool,
     ) -> String {
@@ -104,6 +156,7 @@ impl CodeBuilder {
                 ret_type,
                 arg_name.to_string(),
                 body.to_string(),
+                comment,
                 private,
                 inline_always,
             ));
@@ -128,12 +181,13 @@ impl CodeBuilder {
                 inline_always: true,
             });
         }
-        for (name, ret_type, arg_name, body, private, inline_always) in self.functions {
+        for (name, ret_type, arg_name, body, comment, private, inline_always) in self.functions {
             ir.functions.push(FuncDecl {
                 name,
                 ret_type,
                 arg_name,
                 body,
+                comment,
                 private,
                 inline_always,
             });
@@ -327,7 +381,15 @@ fn gen_inner_code(
             mask2,
         );
 
-        let func_name = code.add_function(IntType::U8, &format!("b{}", unit_bits), "i", &func_body, true, true);
+        let func_name = code.add_function(
+            IntType::U8,
+            &format!("b{}", unit_bits),
+            "i",
+            &func_body,
+            None,
+            true,
+            true,
+        );
         code.accessors.insert(unit_bits);
 
         let start_str = if start > 0 {
@@ -402,7 +464,15 @@ fn gen_outer_code(
 
     // Wrap in a named function if requested.
     if let Some(name) = name {
-        let func_name = code_builder.add_function(ret_type, name, "u", &expr, private, false);
+        let func_name = code_builder.add_function(
+            ret_type,
+            name,
+            "u",
+            &expr,
+            Some(outer_shape_comment(outer, outer_info)),
+            private,
+            false,
+        );
         expr = format!("{}({})", func_name, input_var);
     }
 
@@ -479,7 +549,15 @@ fn gen_palette_outer_code(
 
     // Wrap in a named function if requested.
     if let Some(name) = name {
-        let func_name = code_builder.add_function(ret_type, name, "u", &expr, private, false);
+        let func_name = code_builder.add_function(
+            ret_type,
+            name,
+            "u",
+            &expr,
+            Some(palette_shape_comment(palette_sol, outer_info)),
+            private,
+            false,
+        );
         expr = format!("{}({})", func_name, input_var);
     }
 
@@ -648,6 +726,9 @@ fn render_function(out: &mut String, func: &FuncDecl, lang: Language) {
                 linkage, typ, func.name, func.arg_name
             ));
             out.push_str("{\n");
+            if let Some(comment) = &func.comment {
+                out.push_str(&format!("  /* {} */\n", comment));
+            }
             out.push_str(&format!("  return {};\n", func.body));
             out.push_str("}\n");
         }
@@ -665,6 +746,9 @@ fn render_function(out: &mut String, func: &FuncDecl, lang: Language) {
                 linkage, func.name, func.arg_name, typ
             ));
             out.push_str("{\n");
+            if let Some(comment) = &func.comment {
+                out.push_str(&format!("  /* {} */\n", comment));
+            }
             out.push_str(&format!("  {}\n", func.body));
             out.push_str("}\n");
         }
