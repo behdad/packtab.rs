@@ -5,7 +5,7 @@ use std::process;
 
 fn usage(program: &str) -> String {
     format!(
-        "Usage: {program} <property> <name> [compression]\nSupported properties: {}\n",
+        "Usage: {program} <property> <name> [compression] [--unsafe]\nSupported properties: {}\n",
         supported_properties().join(", ")
     )
 }
@@ -27,22 +27,31 @@ fn main() {
             process::exit(2);
         }
     };
-    let compression = match args.next() {
-        Some(value) => match value.parse::<f64>() {
+    let mut compression = 1.0;
+    let mut unsafe_access = false;
+    for arg in args {
+        if arg == "--unsafe" {
+            unsafe_access = true;
+            continue;
+        }
+        if compression != 1.0 {
+            eprintln!("unexpected argument: {arg}");
+            process::exit(2);
+        }
+        compression = match arg.parse::<f64>() {
             Ok(parsed) => parsed,
             Err(_) => {
-                eprintln!("invalid compression value: {value}");
+                eprintln!("invalid compression value: {arg}");
                 process::exit(2);
             }
-        },
-        None => 1.0,
-    };
+        };
+    }
 
     let options = GenerateOptions {
         name: &name,
         compression,
         default_value: None,
-        unsafe_access: false,
+        unsafe_access,
     };
     match generate_rust_code_for_property(&property, options) {
         Ok(code) => print!("{code}"),
