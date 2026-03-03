@@ -6,6 +6,7 @@ publish = false
 
 [dependencies]
 icu_collections = { path = "/Users/behdad/icu4x/components/collections" }
+icu_properties = { path = "/Users/behdad/icu4x/components/properties", default-features = false }
 packtab = { path = "../packtab" }
 
 [dev-dependencies]

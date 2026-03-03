@@ -1,6 +1,7 @@
 //! ICU4X-oriented adapters and experiments built on top of `packtab`.
 
 use icu_collections::codepointtrie::{CodePointTrie, TrieValue};
+use icu_properties::{CodePointMapData, CodePointMapDataBorrowed};
 use packtab::codegen::Language;
 use std::fmt;
 
@@ -130,6 +131,44 @@ where
     }
 }
 
+/// Flatten an ICU4X `CodePointMapData` into dense scalar data for `packtab`.
+pub fn flatten_code_point_map_data<T>(map: &CodePointMapData<T>) -> PackedCodePointTrieInput<T>
+where
+    T: TrieValue + PacktabValue,
+{
+    if let Some(trie) = map.as_code_point_trie() {
+        flatten_code_point_trie(trie)
+    } else {
+        let trie = map.to_code_point_trie();
+        flatten_code_point_trie(&trie)
+    }
+}
+
+/// Flatten a borrowed ICU4X `CodePointMapDataBorrowed` into dense scalar data for `packtab`.
+pub fn flatten_code_point_map_data_borrowed<T>(
+    map: CodePointMapDataBorrowed<'_, T>,
+) -> PackedCodePointTrieInput<T>
+where
+    T: TrieValue + PacktabValue,
+{
+    let mut scalar_data = vec![map.get32(0); UNICODE_LEN];
+
+    for range in map.iter_ranges() {
+        let start = (*range.range.start()).min(UNICODE_MAX);
+        let end = (*range.range.end()).min(UNICODE_MAX);
+        if start > end {
+            continue;
+        }
+
+        scalar_data[start as usize..=end as usize].fill(range.value);
+    }
+
+    PackedCodePointTrieInput {
+        scalar_data,
+        error_value: map.get32(u32::MAX),
+    }
+}
+
 /// Generate Rust code for a dense packed lookup derived from an ICU4X trie.
 pub fn generate_rust_code<T>(
     input: &PackedCodePointTrieInput<T>,
@@ -194,9 +233,47 @@ where
     generate_rust_code(&input, options)
 }
 
+/// Flatten an ICU4X `CodePointMapData` and immediately generate Rust code for it.
+pub fn generate_rust_code_from_code_point_map_data<T>(
+    map: &CodePointMapData<T>,
+    options: GenerateOptions<'_>,
+) -> Result<String, GenerateError>
+where
+    T: TrieValue + PacktabValue,
+{
+    let input = flatten_code_point_map_data(map);
+    generate_rust_code(&input, options)
+}
+
+/// Flatten borrowed ICU4X code point map data and immediately generate Rust code for it.
+pub fn generate_rust_code_from_code_point_map_data_borrowed<T>(
+    map: CodePointMapDataBorrowed<'_, T>,
+    options: GenerateOptions<'_>,
+) -> Result<String, GenerateError>
+where
+    T: TrieValue + PacktabValue,
+{
+    let input = flatten_code_point_map_data_borrowed(map);
+    generate_rust_code(&input, options)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{generate_rust_code, GenerateError, GenerateOptions, PackedCodePointTrieInput, PacktabValue};
+    use super::{
+        flatten_code_point_map_data_borrowed, generate_rust_code,
+        generate_rust_code_from_code_point_map_data_borrowed, GenerateError, GenerateOptions,
+        PackedCodePointTrieInput, PacktabValue,
+    };
+    use icu_codepointtrie_builder::CodePointTrieBuilder;
+    use icu_collections::codepointtrie::TrieType;
+    use icu_properties::CodePointMapData;
+
+    fn sample_map(default_value: u8, error_value: u8) -> CodePointMapData<u8> {
+        let mut builder = CodePointTrieBuilder::new(default_value, error_value, TrieType::Small);
+        builder.set_range_value('A' as u32..='Z' as u32, 1);
+        builder.set_range_value('a' as u32..='z' as u32, 2);
+        CodePointMapData::from_code_point_trie(builder.build())
+    }
 
     #[test]
     fn generate_rust_code_uses_explicit_default_override() {
@@ -243,5 +320,29 @@ mod tests {
             42u64.try_to_i64(),
             Err(GenerateError::UnsupportedType("u64"))
         );
+    }
+
+    #[test]
+    fn flatten_borrowed_code_point_map_data_preserves_values() {
+        let map = sample_map(9, 250);
+        let packed = flatten_code_point_map_data_borrowed(map.as_borrowed());
+
+        assert_eq!(packed.scalar_data['A' as usize], 1);
+        assert_eq!(packed.scalar_data['a' as usize], 2);
+        assert_eq!(packed.scalar_data[0], 9);
+        assert_eq!(packed.error_value, 250);
+    }
+
+    #[test]
+    fn generate_from_borrowed_code_point_map_data_works() {
+        let map = sample_map(9, 250);
+        let code = generate_rust_code_from_code_point_map_data_borrowed(
+            map.as_borrowed(),
+            GenerateOptions::new("lookup"),
+        )
+        .unwrap();
+
+        assert!(code.contains("fn lookup(cp: u32) -> u8"));
+        assert!(code.contains("250 as u8"));
     }
 }
