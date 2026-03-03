@@ -10,3 +10,4 @@ packtab = { path = "../packtab" }
 
 [dev-dependencies]
 icu_codepointtrie_builder = { path = "/Users/behdad/icu4x/components/collections/codepointtrie_builder" }
+tempfile = "3"

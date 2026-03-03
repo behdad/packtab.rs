@@ -13,6 +13,14 @@ fn sample_trie(default_value: u8, error_value: u8) -> CodePointTrie<'static, u8>
     builder.build()
 }
 
+fn edge_trie(default_value: u16, error_value: u16) -> CodePointTrie<'static, u16> {
+    let mut builder = CodePointTrieBuilder::new(default_value, error_value, TrieType::Small);
+    builder.set_value(0, 1);
+    builder.set_value(char::MAX as u32, 2);
+    builder.set_range_value(0x80..=0x8F, 3);
+    builder.build()
+}
+
 #[test]
 fn flatten_preserves_scalar_values_and_error_value() {
     let trie = sample_trie(9, 250);
@@ -49,6 +57,43 @@ fn generation_omits_error_guard_when_default_matches_error() {
     assert!(code.contains("fn lookup(cp: u32) -> u8"));
     assert!(!code.contains("if cp > 0x10ffff"));
     assert!(code.contains("lookup_packtab_get(cp as usize)"));
+}
+
+#[test]
+fn flatten_matches_trie_queries_at_range_boundaries() {
+    let trie = edge_trie(99, 777);
+    let packed = flatten_code_point_trie(&trie);
+    let cps = [0, 1, 0x7F, 0x80, 0x8F, 0x90, char::MAX as u32];
+
+    for cp in cps {
+        assert_eq!(packed.scalar_data[cp as usize], trie.get32(cp));
+    }
+}
+
+#[test]
+fn flatten_covers_unicode_endpoints() {
+    let trie = edge_trie(99, 777);
+    let packed = flatten_code_point_trie(&trie);
+
+    assert_eq!(packed.scalar_data[0], 1);
+    assert_eq!(packed.scalar_data[char::MAX as usize], 2);
+    assert_eq!(packed.scalar_data[1], 99);
+}
+
+#[test]
+fn generation_respects_explicit_default_value() {
+    let trie = sample_trie(9, 250);
+    let packed = flatten_code_point_trie(&trie);
+    let options = GenerateOptions {
+        name: "lookup",
+        compression: 1.0,
+        default_value: Some(9),
+        unsafe_access: false,
+    };
+    let code = generate_rust_code(&packed, options).unwrap();
+
+    assert!(code.contains("fn lookup(cp: u32) -> u8"));
+    assert!(code.contains("250 as u8"));
 }
 
 #[test]
