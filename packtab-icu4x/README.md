@@ -21,14 +21,44 @@ Generate Rust for a compiled ICU4X property:
 cargo run -p packtab-icu4x --features compiled_data --bin packtab-icu4x-gen -- gc gc_lookup
 ```
 
-Supported property names:
+Supported property names shown by the tool:
 
 - `bc`
-- `ccc`
-- `ea`
+- `nt`
 - `gc`
-- `lb`
+- `sc`
 - `script`
+- `hst`
+- `ea`
+- `lb`
+- `gcb`
+- `wb`
+- `sb`
+- `ccc`
+- `incb`
+- `insc`
+- `jg`
+- `jt`
+- `vo`
+
+The generator also accepts normalized long-form names by stripping non-alphanumeric
+characters and lowercasing first. Current long-form aliases are:
+
+- `Bidi_Class`
+- `Numeric_Type`
+- `Canonical_Combining_Class`
+- `East_Asian_Width`
+- `General_Category`
+- `Line_Break`
+- `Hangul_Syllable_Type`
+- `Grapheme_Cluster_Break`
+- `Word_Break`
+- `Sentence_Break`
+- `Indic_Conjunct_Break`
+- `Indic_Syllabic_Category`
+- `Joining_Group`
+- `Joining_Type`
+- `Vertical_Orientation`
 
 Options:
 
