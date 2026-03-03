@@ -30,6 +30,10 @@ path = "src/bin/packtab-icu4x-gen.rs"
 required-features = ["compiled_data"]
 
 [[bin]]
+name = "size-empty"
+path = "src/bin/size-empty.rs"
+
+[[bin]]
 name = "size-gc-icu"
 path = "src/bin/size-gc-icu.rs"
 required-features = ["compiled_data"]
