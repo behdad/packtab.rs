@@ -29,6 +29,76 @@ name = "packtab-icu4x-gen"
 path = "src/bin/packtab-icu4x-gen.rs"
 required-features = ["compiled_data"]
 
+[[bin]]
+name = "size-gc-icu"
+path = "src/bin/size-gc-icu.rs"
+required-features = ["compiled_data"]
+
+[[bin]]
+name = "size-gc-packtab"
+path = "src/bin/size-gc-packtab.rs"
+required-features = ["compiled_data"]
+
+[[bin]]
+name = "size-gc-packtab-unsafe"
+path = "src/bin/size-gc-packtab-unsafe.rs"
+required-features = ["compiled_data"]
+
+[[bin]]
+name = "size-gc-packtab-c5"
+path = "src/bin/size-gc-packtab-c5.rs"
+required-features = ["compiled_data"]
+
+[[bin]]
+name = "size-gc-packtab-c5-unsafe"
+path = "src/bin/size-gc-packtab-c5-unsafe.rs"
+required-features = ["compiled_data"]
+
+[[bin]]
+name = "size-gc-packtab-c9"
+path = "src/bin/size-gc-packtab-c9.rs"
+required-features = ["compiled_data"]
+
+[[bin]]
+name = "size-gc-packtab-c9-unsafe"
+path = "src/bin/size-gc-packtab-c9-unsafe.rs"
+required-features = ["compiled_data"]
+
+[[bin]]
+name = "size-script-icu"
+path = "src/bin/size-script-icu.rs"
+required-features = ["compiled_data"]
+
+[[bin]]
+name = "size-script-packtab"
+path = "src/bin/size-script-packtab.rs"
+required-features = ["compiled_data"]
+
+[[bin]]
+name = "size-script-packtab-unsafe"
+path = "src/bin/size-script-packtab-unsafe.rs"
+required-features = ["compiled_data"]
+
+[[bin]]
+name = "size-script-packtab-c5"
+path = "src/bin/size-script-packtab-c5.rs"
+required-features = ["compiled_data"]
+
+[[bin]]
+name = "size-script-packtab-c5-unsafe"
+path = "src/bin/size-script-packtab-c5-unsafe.rs"
+required-features = ["compiled_data"]
+
+[[bin]]
+name = "size-script-packtab-c9"
+path = "src/bin/size-script-packtab-c9.rs"
+required-features = ["compiled_data"]
+
+[[bin]]
+name = "size-script-packtab-c9-unsafe"
+path = "src/bin/size-script-packtab-c9-unsafe.rs"
+required-features = ["compiled_data"]
+
 [[bench]]
 name = "properties"
 harness = false

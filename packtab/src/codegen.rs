@@ -687,7 +687,11 @@ fn render_accessor(out: &mut String, acc: &AccessorDecl, lang: Language) {
             out.push_str("}\n");
         }
         Language::Rust { unsafe_access } => {
-            out.push_str("#[allow(dead_code, unused_parens)]\n");
+            if unsafe_access {
+                out.push_str("#[allow(dead_code, unused_parens, unused_unsafe)]\n");
+            } else {
+                out.push_str("#[allow(dead_code, unused_parens)]\n");
+            }
             if acc.inline_always {
                 out.push_str("#[inline(always)]\n");
             } else {
@@ -732,8 +736,12 @@ fn render_function(out: &mut String, func: &FuncDecl, lang: Language) {
             out.push_str(&format!("  return {};\n", func.body));
             out.push_str("}\n");
         }
-        Language::Rust { .. } => {
-            out.push_str("#[allow(dead_code, unused_parens)]\n");
+        Language::Rust { unsafe_access } => {
+            if unsafe_access {
+                out.push_str("#[allow(dead_code, unused_parens, unused_unsafe)]\n");
+            } else {
+                out.push_str("#[allow(dead_code, unused_parens)]\n");
+            }
             if func.inline_always {
                 out.push_str("#[inline(always)]\n");
             } else {
