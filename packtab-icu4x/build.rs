@@ -9,6 +9,7 @@ use std::path::PathBuf;
 fn generate_for_property<T>(
     name: &str,
     map: icu_properties::CodePointMapDataBorrowed<'static, T>,
+    compression: f64,
     unsafe_access: bool,
 ) -> String
 where
@@ -25,7 +26,7 @@ where
     }
 
     let error_value = map.get32(u32::MAX).to_u32() as i64;
-    let (info, best) = packtab::pack_table(&scalar_data, None, 1.0);
+    let (info, best) = packtab::pack_table(&scalar_data, None, compression);
     let inner = packtab::generate(
         &info,
         best,
@@ -43,17 +44,47 @@ fn main() {
 
     let out_dir = PathBuf::from(env::var_os("OUT_DIR").unwrap());
     let generated = format!(
-        "{}\n{}\n{}\n{}",
-        generate_for_property("gc_lookup", CodePointMapData::<GeneralCategory>::new(), false),
+        "{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}",
+        generate_for_property("gc_lookup", CodePointMapData::<GeneralCategory>::new(), 1.0, false),
         generate_for_property(
             "gc_lookup_unsafe",
             CodePointMapData::<GeneralCategory>::new(),
+            1.0,
             true,
         ),
-        generate_for_property("script_lookup", CodePointMapData::<Script>::new(), false),
+        generate_for_property("gc_lookup_c5", CodePointMapData::<GeneralCategory>::new(), 5.0, false),
+        generate_for_property(
+            "gc_lookup_c5_unsafe",
+            CodePointMapData::<GeneralCategory>::new(),
+            5.0,
+            true,
+        ),
+        generate_for_property("gc_lookup_c9", CodePointMapData::<GeneralCategory>::new(), 9.0, false),
+        generate_for_property(
+            "gc_lookup_c9_unsafe",
+            CodePointMapData::<GeneralCategory>::new(),
+            9.0,
+            true,
+        ),
+        generate_for_property("script_lookup", CodePointMapData::<Script>::new(), 1.0, false),
         generate_for_property(
             "script_lookup_unsafe",
             CodePointMapData::<Script>::new(),
+            1.0,
+            true,
+        ),
+        generate_for_property("script_lookup_c5", CodePointMapData::<Script>::new(), 5.0, false),
+        generate_for_property(
+            "script_lookup_c5_unsafe",
+            CodePointMapData::<Script>::new(),
+            5.0,
+            true,
+        ),
+        generate_for_property("script_lookup_c9", CodePointMapData::<Script>::new(), 9.0, false),
+        generate_for_property(
+            "script_lookup_c9_unsafe",
+            CodePointMapData::<Script>::new(),
+            9.0,
             true,
         ),
     );

@@ -1,4 +1,5 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use icu_collections::codepointtrie::TrieValue;
 use icu_properties::props::{GeneralCategory, Script};
 use icu_properties::CodePointMapData;
 
@@ -23,9 +24,9 @@ fn bench_gc(c: &mut Criterion) {
             let mut acc = 0u32;
             for &cp in &data {
                 let value = if cp > char::MAX as u32 {
-                    icu.get32(u32::MAX).to_icu4c_value() as u32
+                    icu.get32(u32::MAX).to_u32()
                 } else {
-                    icu.get32(cp).to_icu4c_value() as u32
+                    icu.get32(cp).to_u32()
                 };
                 acc ^= value;
             }
@@ -52,6 +53,46 @@ fn bench_gc(c: &mut Criterion) {
             black_box(acc)
         })
     });
+
+    c.bench_function("gc/packtab-c9", |b| {
+        b.iter(|| {
+            let mut acc = 0u32;
+            for &cp in &data {
+                acc ^= gc_lookup_c9(black_box(cp));
+            }
+            black_box(acc)
+        })
+    });
+
+    c.bench_function("gc/packtab-c5", |b| {
+        b.iter(|| {
+            let mut acc = 0u32;
+            for &cp in &data {
+                acc ^= gc_lookup_c5(black_box(cp));
+            }
+            black_box(acc)
+        })
+    });
+
+    c.bench_function("gc/packtab-c5-unsafe", |b| {
+        b.iter(|| {
+            let mut acc = 0u32;
+            for &cp in &data {
+                acc ^= gc_lookup_c5_unsafe(black_box(cp));
+            }
+            black_box(acc)
+        })
+    });
+
+    c.bench_function("gc/packtab-c9-unsafe", |b| {
+        b.iter(|| {
+            let mut acc = 0u32;
+            for &cp in &data {
+                acc ^= gc_lookup_c9_unsafe(black_box(cp));
+            }
+            black_box(acc)
+        })
+    });
 }
 
 fn bench_script(c: &mut Criterion) {
@@ -63,9 +104,9 @@ fn bench_script(c: &mut Criterion) {
             let mut acc = 0u32;
             for &cp in &data {
                 let value = if cp > char::MAX as u32 {
-                    icu.get32(u32::MAX).to_icu4c_value() as u32
+                    icu.get32(u32::MAX).to_u32()
                 } else {
-                    icu.get32(cp).to_icu4c_value() as u32
+                    icu.get32(cp).to_u32()
                 };
                 acc ^= value;
             }
@@ -88,6 +129,46 @@ fn bench_script(c: &mut Criterion) {
             let mut acc = 0u32;
             for &cp in &data {
                 acc ^= script_lookup_unsafe(black_box(cp));
+            }
+            black_box(acc)
+        })
+    });
+
+    c.bench_function("script/packtab-c9", |b| {
+        b.iter(|| {
+            let mut acc = 0u32;
+            for &cp in &data {
+                acc ^= script_lookup_c9(black_box(cp));
+            }
+            black_box(acc)
+        })
+    });
+
+    c.bench_function("script/packtab-c5", |b| {
+        b.iter(|| {
+            let mut acc = 0u32;
+            for &cp in &data {
+                acc ^= script_lookup_c5(black_box(cp));
+            }
+            black_box(acc)
+        })
+    });
+
+    c.bench_function("script/packtab-c5-unsafe", |b| {
+        b.iter(|| {
+            let mut acc = 0u32;
+            for &cp in &data {
+                acc ^= script_lookup_c5_unsafe(black_box(cp));
+            }
+            black_box(acc)
+        })
+    });
+
+    c.bench_function("script/packtab-c9-unsafe", |b| {
+        b.iter(|| {
+            let mut acc = 0u32;
+            for &cp in &data {
+                acc ^= script_lookup_c9_unsafe(black_box(cp));
             }
             black_box(acc)
         })
