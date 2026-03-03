@@ -385,15 +385,23 @@ mod tests {
         generate_rust_code_from_code_point_map_data_borrowed, GenerateError, GenerateOptions,
         PackedCodePointTrieInput, PacktabValue,
     };
-    use icu_codepointtrie_builder::CodePointTrieBuilder;
+    use icu_codepointtrie_builder::{CodePointTrieBuilder, CodePointTrieBuilderData};
     use icu_collections::codepointtrie::TrieType;
     use icu_properties::CodePointMapData;
 
     fn sample_map(default_value: u8, error_value: u8) -> CodePointMapData<u8> {
-        let mut builder = CodePointTrieBuilder::new(default_value, error_value, TrieType::Small);
-        builder.set_range_value('A' as u32..='Z' as u32, 1);
-        builder.set_range_value('a' as u32..='z' as u32, 2);
-        CodePointMapData::from_code_point_trie(builder.build())
+        let mut values = vec![default_value; 'z' as usize + 1];
+        values['A' as usize..='Z' as usize].fill(1);
+        values['a' as usize..='z' as usize].fill(2);
+        CodePointMapData::from_code_point_trie(
+            CodePointTrieBuilder {
+                data: CodePointTrieBuilderData::ValuesByCodePoint(&values),
+                default_value,
+                error_value,
+                trie_type: TrieType::Small,
+            }
+            .build(),
+        )
     }
 
     #[test]

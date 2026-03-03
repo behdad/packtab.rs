@@ -1,4 +1,4 @@
-use icu_codepointtrie_builder::CodePointTrieBuilder;
+use icu_codepointtrie_builder::{CodePointTrieBuilder, CodePointTrieBuilderData};
 use icu_collections::codepointtrie::{CodePointTrie, TrieType};
 use icu_properties::CodePointMapData;
 use packtab_icu4x::{
@@ -9,19 +9,31 @@ use packtab_icu4x::{
 };
 
 fn sample_trie(default_value: u8, error_value: u8) -> CodePointTrie<'static, u8> {
-    let mut builder = CodePointTrieBuilder::new(default_value, error_value, TrieType::Small);
-    builder.set_range_value('A' as u32..='Z' as u32, 1);
-    builder.set_range_value('a' as u32..='z' as u32, 2);
-    builder.set_range_value(0x1F600..=0x1F64F, 3);
-    builder.build()
+    let mut values = vec![default_value; 0x1F650];
+    values['A' as usize..='Z' as usize].fill(1);
+    values['a' as usize..='z' as usize].fill(2);
+    values[0x1F600..=0x1F64F].fill(3);
+    CodePointTrieBuilder {
+        data: CodePointTrieBuilderData::ValuesByCodePoint(&values),
+        default_value,
+        error_value,
+        trie_type: TrieType::Small,
+    }
+    .build()
 }
 
 fn edge_trie(default_value: u16, error_value: u16) -> CodePointTrie<'static, u16> {
-    let mut builder = CodePointTrieBuilder::new(default_value, error_value, TrieType::Small);
-    builder.set_value(0, 1);
-    builder.set_value(char::MAX as u32, 2);
-    builder.set_range_value(0x80..=0x8F, 3);
-    builder.build()
+    let mut values = vec![default_value; char::MAX as usize + 1];
+    values[0] = 1;
+    values[char::MAX as usize] = 2;
+    values[0x80..=0x8F].fill(3);
+    CodePointTrieBuilder {
+        data: CodePointTrieBuilderData::ValuesByCodePoint(&values),
+        default_value,
+        error_value,
+        trie_type: TrieType::Small,
+    }
+    .build()
 }
 
 fn sample_map(default_value: u8, error_value: u8) -> CodePointMapData<u8> {

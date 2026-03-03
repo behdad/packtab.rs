@@ -1,4 +1,4 @@
-use icu_codepointtrie_builder::CodePointTrieBuilder;
+use icu_codepointtrie_builder::{CodePointTrieBuilder, CodePointTrieBuilderData};
 use icu_collections::codepointtrie::{CodePointTrie, TrieType};
 use packtab_icu4x::{generate_rust_code_from_trie, GenerateOptions};
 use std::fs;
@@ -6,11 +6,17 @@ use std::process::Command;
 use tempfile::tempdir;
 
 fn sample_trie(default_value: u8, error_value: u8) -> CodePointTrie<'static, u8> {
-    let mut builder = CodePointTrieBuilder::new(default_value, error_value, TrieType::Small);
-    builder.set_range_value('A' as u32..='Z' as u32, 1);
-    builder.set_range_value('a' as u32..='z' as u32, 2);
-    builder.set_range_value(0x1F600..=0x1F64F, 3);
-    builder.build()
+    let mut values = vec![default_value; 0x1F650];
+    values['A' as usize..='Z' as usize].fill(1);
+    values['a' as usize..='z' as usize].fill(2);
+    values[0x1F600..=0x1F64F].fill(3);
+    CodePointTrieBuilder {
+        data: CodePointTrieBuilderData::ValuesByCodePoint(&values),
+        default_value,
+        error_value,
+        trie_type: TrieType::Small,
+    }
+    .build()
 }
 
 #[test]
