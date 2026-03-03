@@ -94,7 +94,8 @@ Takeaways from this run:
 
 ## Binary Size Measurement
 
-The size harness uses separate release binaries per property and configuration.
+The size harness uses separate release binaries per property and configuration, plus an `empty`
+baseline binary with the same general harness shape but no property lookup tables.
 
 Build them:
 
@@ -104,6 +105,7 @@ cargo build -p packtab-icu4x --release --features compiled_data --bins
 
 The main binaries are:
 
+- `size-empty`
 - `size-gc-icu`
 - `size-gc-packtab`
 - `size-gc-packtab-unsafe`
@@ -133,6 +135,9 @@ The most useful comparison here is:
 
 and their sum as a rough `code + rodata` metric.
 
+For property accounting, use deltas against `size-empty`, not the raw totals. That removes most
+of the common harness/runtime noise and gets much closer to the actual property representation cost.
+
 ### Current section sizes
 
 Measured on this machine from `size -m`:
@@ -154,19 +159,41 @@ Measured on this machine from `size -m`:
 | `size-script-packtab-c9` | `215016` | `29552` | `9600` | `254168` |
 | `size-script-packtab-c9-unsafe` | `215412` | `29456` | `9528` | `254396` |
 
-Takeaways from this run:
+### Current deltas over `size-empty`
+
+`size-empty` measured:
+
+| Binary | `__text` | `__TEXT.__const` | `__DATA_CONST.__const` | `code + rodata` |
+|---|---:|---:|---:|---:|
+| `size-empty` | `215016` | `15952` | `9528` | `240496` |
+
+Using `code + rodata - size-empty(code + rodata)`:
+
+| Binary | Delta vs `size-empty` |
+|---|---:|
+| `size-gc-icu` | `17756` |
+| `size-gc-packtab` | `20328` |
+| `size-gc-packtab-c5` | `12272` |
+| `size-gc-packtab-c9` | `12272` |
+| `size-script-icu` | `26032` |
+| `size-script-packtab` | `39720` |
+| `size-script-packtab-c5` | `15368` |
+| `size-script-packtab-c9` | `13672` |
+
+Takeaways from the delta view:
 
 - `gc`:
-  - compression `1` is slightly larger than ICU4X
+  - compression `1` is larger than ICU4X
   - compression `5` and `9` are both smaller than ICU4X
-  - `5` and `9` produced the same size on this property in this run
+  - `5` and `9` produced the same measured footprint on this property in this run
 - `script`:
   - compression `1` is substantially larger than ICU4X
   - compression `5` and `9` are both smaller than ICU4X
   - compression `9` is the smallest of the measured `script` variants
-- unsafe code has negligible size impact relative to the corresponding safe variant
+- unsafe code has negligible size impact relative to the corresponding safe variant, so the safe deltas are a good proxy for both
 
 ## Notes
 
-- Whole binary size is intentionally not the primary metric here; section sizes are much more meaningful.
+- Whole binary size is intentionally not the primary metric here.
+- Raw section totals are still somewhat noisy; deltas against `size-empty` are the better approximation for property cost in this harness.
 - The current build script generates `u32` wrappers for the measurement harnesses to compare lookup cost and static footprint without enum reconstruction noise.
