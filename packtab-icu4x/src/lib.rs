@@ -139,7 +139,7 @@ impl PacktabValue for u64 {
 
 #[cfg(feature = "compiled_data")]
 macro_rules! impl_packtab_value_via_to_u32 {
-    ($ty:ty, $rust_name:literal, $inner_ty:literal) => {
+    ($ty:ty, $rust_name:literal) => {
         impl PacktabValue for $ty {
             fn try_to_i64(self) -> Result<i64, GenerateError> {
                 Ok(self.to_u32() as i64)
@@ -150,11 +150,17 @@ macro_rules! impl_packtab_value_via_to_u32 {
             }
 
             fn render_literal(value: i64) -> Result<String, GenerateError> {
-                Ok(format!("{}::from_icu4c_value({value} as {})", $rust_name, $inner_ty))
+                Ok(format!(
+                    "<{} as icu_collections::codepointtrie::TrieValue>::try_from_u32({value} as u32).unwrap()",
+                    $rust_name
+                ))
             }
 
             fn render_expr(expr: &str) -> Result<String, GenerateError> {
-                Ok(format!("{}::from_icu4c_value(({expr}) as {})", $rust_name, $inner_ty))
+                Ok(format!(
+                    "<{} as icu_collections::codepointtrie::TrieValue>::try_from_u32(({expr}) as u32).unwrap()",
+                    $rust_name
+                ))
             }
         }
     };
@@ -163,35 +169,65 @@ macro_rules! impl_packtab_value_via_to_u32 {
 #[cfg(feature = "compiled_data")]
 impl_packtab_value_via_to_u32!(
     icu_properties::props::BidiClass,
-    "icu_properties::props::BidiClass",
-    "u8"
+    "icu_properties::props::BidiClass"
 );
 #[cfg(feature = "compiled_data")]
 impl_packtab_value_via_to_u32!(
     icu_properties::props::CanonicalCombiningClass,
-    "icu_properties::props::CanonicalCombiningClass",
-    "u8"
+    "icu_properties::props::CanonicalCombiningClass"
 );
 #[cfg(feature = "compiled_data")]
 impl_packtab_value_via_to_u32!(
     icu_properties::props::EastAsianWidth,
-    "icu_properties::props::EastAsianWidth",
-    "u8"
+    "icu_properties::props::EastAsianWidth"
 );
 #[cfg(feature = "compiled_data")]
 impl_packtab_value_via_to_u32!(
     icu_properties::props::GeneralCategory,
-    "icu_properties::props::GeneralCategory",
-    "u8"
+    "icu_properties::props::GeneralCategory"
 );
 #[cfg(feature = "compiled_data")]
 impl_packtab_value_via_to_u32!(
     icu_properties::props::LineBreak,
-    "icu_properties::props::LineBreak",
-    "u8"
+    "icu_properties::props::LineBreak"
 );
 #[cfg(feature = "compiled_data")]
-impl_packtab_value_via_to_u32!(icu_properties::props::Script, "icu_properties::props::Script", "u16");
+impl_packtab_value_via_to_u32!(icu_properties::props::Script, "icu_properties::props::Script");
+#[cfg(feature = "compiled_data")]
+impl_packtab_value_via_to_u32!(icu_properties::props::NumericType, "icu_properties::props::NumericType");
+#[cfg(feature = "compiled_data")]
+impl_packtab_value_via_to_u32!(
+    icu_properties::props::HangulSyllableType,
+    "icu_properties::props::HangulSyllableType"
+);
+#[cfg(feature = "compiled_data")]
+impl_packtab_value_via_to_u32!(
+    icu_properties::props::GraphemeClusterBreak,
+    "icu_properties::props::GraphemeClusterBreak"
+);
+#[cfg(feature = "compiled_data")]
+impl_packtab_value_via_to_u32!(icu_properties::props::WordBreak, "icu_properties::props::WordBreak");
+#[cfg(feature = "compiled_data")]
+impl_packtab_value_via_to_u32!(icu_properties::props::SentenceBreak, "icu_properties::props::SentenceBreak");
+#[cfg(feature = "compiled_data")]
+impl_packtab_value_via_to_u32!(
+    icu_properties::props::IndicConjunctBreak,
+    "icu_properties::props::IndicConjunctBreak"
+);
+#[cfg(feature = "compiled_data")]
+impl_packtab_value_via_to_u32!(
+    icu_properties::props::IndicSyllabicCategory,
+    "icu_properties::props::IndicSyllabicCategory"
+);
+#[cfg(feature = "compiled_data")]
+impl_packtab_value_via_to_u32!(icu_properties::props::JoiningGroup, "icu_properties::props::JoiningGroup");
+#[cfg(feature = "compiled_data")]
+impl_packtab_value_via_to_u32!(icu_properties::props::JoiningType, "icu_properties::props::JoiningType");
+#[cfg(feature = "compiled_data")]
+impl_packtab_value_via_to_u32!(
+    icu_properties::props::VerticalOrientation,
+    "icu_properties::props::VerticalOrientation"
+);
 
 /// Flatten an ICU4X `CodePointTrie` into dense scalar data for `packtab`.
 pub fn flatten_code_point_trie<T>(trie: &CodePointTrie<'_, T>) -> PackedCodePointTrieInput<T>
