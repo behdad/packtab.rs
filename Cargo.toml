@@ -1,3 +1,3 @@
 [workspace]
-members = ["packtab", "packtab-macro", "packtab-cli"]
+members = ["packtab", "packtab-macro", "packtab-cli", "packtab-icu4x"]
 resolver = "2"
