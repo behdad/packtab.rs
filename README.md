@@ -88,7 +88,7 @@ Example:
 use packtab::codegen::Language;
 
 let data: Vec<i64> = (0..256).map(|i| (i * 7) % 256).collect();
-let (info, best) = packtab::pack_table(&data, 0, 1.0);
+let (info, best) = packtab::pack_table(&data, Some(0), 1.0);
 let code = packtab::generate(&info, best, "my_table", Language::C);
 println!("{}", code);
 ```
@@ -120,7 +120,7 @@ inline lookup function.
 
 ### Options
 
-- **`default`** (required): Value returned for out-of-range indices.
+- **`default`** (optional): Explicit default value. If omitted, tries both boundary values and merges the resulting Pareto frontier.
 - **`compression`** (optional): `0` prefers flat encoding, `1..9` use the size/speed heuristic, and `10` minimizes raw table bytes. Default `1.0`.
 - **`unsafe`** (optional): When `true`, uses `get_unchecked` for array accesses. Default `false`.
 

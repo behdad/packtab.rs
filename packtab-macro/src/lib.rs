@@ -21,7 +21,7 @@ struct PackTableInput {
     _arg_name: Ident,
     _ret_type: Type,
     data: Vec<i64>,
-    default: i64,
+    default: Option<i64>,
     compression: f64,
     unsafe_access: bool,
 }
@@ -69,20 +69,23 @@ impl Parse for PackTableInput {
         }
         brace_content.parse::<Token![,]>()?;
 
-        // default: N
-        let default_ident: Ident = brace_content.parse()?;
-        if default_ident != "default" {
-            return Err(syn::Error::new_spanned(default_ident, "expected 'default'"));
+        // Optional default: N
+        let mut default = None;
+        if !brace_content.is_empty() && !brace_content.peek(Token![,]) {
+            let ident: Ident = brace_content.parse()?;
+            if ident != "default" {
+                return Err(syn::Error::new_spanned(ident, "expected 'default'"));
+            }
+            brace_content.parse::<Token![:]>()?;
+            default = Some(if brace_content.peek(Token![-]) {
+                brace_content.parse::<Token![-]>()?;
+                let lit: LitInt = brace_content.parse()?;
+                -(lit.base10_parse::<i64>()?)
+            } else {
+                let lit: LitInt = brace_content.parse()?;
+                lit.base10_parse::<i64>()?
+            });
         }
-        brace_content.parse::<Token![:]>()?;
-        let default = if brace_content.peek(Token![-]) {
-            brace_content.parse::<Token![-]>()?;
-            let lit: LitInt = brace_content.parse()?;
-            -(lit.base10_parse::<i64>()?)
-        } else {
-            let lit: LitInt = brace_content.parse()?;
-            lit.base10_parse::<i64>()?
-        };
 
         // Optional trailing fields: compression, unsafe
         let mut compression = 1.0f64;

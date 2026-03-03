@@ -418,6 +418,20 @@ impl AnyOuterSolution {
     }
 }
 
+pub(crate) fn prune_pareto_solutions(mut solutions: Vec<AnyOuterSolution>) -> Vec<AnyOuterSolution> {
+    solutions.sort_by_key(|s| (s.n_lookups(), s.full_cost()));
+    let mut kept = Vec::new();
+    let mut best_cost = usize::MAX;
+    for solution in solutions {
+        let full_cost = solution.full_cost();
+        if full_cost < best_cost {
+            kept.push(solution);
+            best_cost = full_cost;
+        }
+    }
+    kept
+}
+
 /// Arithmetic preprocessing result.
 #[derive(Debug)]
 pub struct OuterLayerInfo {

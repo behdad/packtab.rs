@@ -59,23 +59,53 @@ fn pick_best_info(candidates: Vec<OuterLayerInfo>, compression: f64) -> (OuterLa
     (info, solution_idx)
 }
 
+fn candidate_infos(data: &[i64], default: Option<i64>) -> Vec<OuterLayerInfo> {
+    assert!(!data.is_empty(), "data must not be empty");
+
+    let defaults: Vec<i64> = match default {
+        Some(default) => vec![default],
+        None => {
+            let first = data[0];
+            let last = data[data.len() - 1];
+            if first == last {
+                vec![first]
+            } else {
+                vec![first, last]
+            }
+        }
+    };
+
+    let mut candidates = Vec::new();
+    for default in defaults {
+        candidates.push(OuterLayerInfo::new(data, default));
+        if let Some(exact) = OuterLayerInfo::exact_inline_candidate(data, default) {
+            candidates.push(exact);
+        }
+    }
+    candidates
+}
+
 /// Pack a table of integers into compact multi-level lookup tables.
 ///
 /// Returns the OuterLayerInfo (containing all solutions) and the
 /// picked best solution index.
-pub fn pack_table(data: &[i64], default: i64, compression: f64) -> (OuterLayerInfo, usize) {
-    assert!(!data.is_empty(), "data must not be empty");
-    let mut candidates = vec![OuterLayerInfo::new(data, default)];
-    if let Some(exact) = OuterLayerInfo::exact_inline_candidate(data, default) {
-        candidates.push(exact);
-    }
-    pick_best_info(candidates, compression)
+pub fn pack_table(
+    data: &[i64],
+    default: Option<i64>,
+    compression: f64,
+) -> (OuterLayerInfo, usize) {
+    pick_best_info(candidate_infos(data, default), compression)
 }
 
 /// Pack and return all solutions (for advanced usage).
-pub fn pack_table_all(data: &[i64], default: i64) -> OuterLayerInfo {
-    assert!(!data.is_empty(), "data must not be empty");
-    OuterLayerInfo::new(data, default)
+pub fn pack_table_all(data: &[i64], default: Option<i64>) -> OuterLayerInfo {
+    let mut candidates = candidate_infos(data, default).into_iter();
+    let mut merged = candidates.next().expect("at least one candidate layer");
+    for candidate in candidates {
+        merged.solutions.extend(candidate.solutions);
+    }
+    merged.solutions = layer::prune_pareto_solutions(merged.solutions);
+    merged
 }
 
 /// Select the best solution from the Pareto frontier.

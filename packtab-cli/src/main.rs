@@ -23,9 +23,9 @@ struct Cli {
     #[arg(long, name = "unsafe")]
     unsafe_access: bool,
 
-    /// Default value for out-of-range indices.
-    #[arg(long, default_value = "0")]
-    default: i64,
+    /// Default value for out-of-range indices. If omitted, tries both boundary values.
+    #[arg(long)]
+    default: Option<i64>,
 
     /// Size vs speed tradeoff: 0 = flat, 1..9 = heuristic, 10 = minimum bytes.
     /// For C: use '1,9' to generate both variants with #ifdef __OPTIMIZE_SIZE__.
@@ -81,7 +81,7 @@ fn main() {
     };
 
     let data = if cli.sparse {
-        parse_sparse_data(&content, cli.default)
+        parse_sparse_data(&content, cli.default.unwrap_or(0))
             .unwrap_or_else(|e| {
                 eprintln!("Error: {}", e);
                 std::process::exit(1);
@@ -209,7 +209,7 @@ fn parse_sparse_data(content: &str, default: i64) -> Result<Vec<i64>, String> {
     Ok(data)
 }
 
-fn print_analysis(data: &[i64], default: i64, compression: f64) {
+fn print_analysis(data: &[i64], default: Option<i64>, compression: f64) {
     use packtab::util::binary_bits_for;
 
     let info = packtab::pack_table_all(data, default);
@@ -227,7 +227,10 @@ fn print_analysis(data: &[i64], default: i64, compression: f64) {
         "Original storage: {} bits/value, {} bytes total",
         bits_needed, original_bytes
     );
-    println!("Default value: {}", default);
+    match default {
+        Some(default) => println!("Default value: {}", default),
+        None => println!("Default value: inferred from boundary values"),
+    }
     println!();
     println!("Found {} Pareto-optimal solutions:", info.solutions.len());
     println!();
