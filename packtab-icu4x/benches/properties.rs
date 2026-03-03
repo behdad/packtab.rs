@@ -15,6 +15,30 @@ fn corpus() -> Vec<u32> {
     cps
 }
 
+fn bench_empty(c: &mut Criterion) {
+    let data = corpus();
+
+    c.bench_function("empty/xor-cp", |b| {
+        b.iter(|| {
+            let mut acc = 0u32;
+            for &cp in &data {
+                acc ^= cp;
+            }
+            black_box(acc)
+        })
+    });
+
+    c.bench_function("empty/xor-black-box-cp", |b| {
+        b.iter(|| {
+            let mut acc = 0u32;
+            for &cp in &data {
+                acc ^= black_box(cp);
+            }
+            black_box(acc)
+        })
+    });
+}
+
 fn bench_gc(c: &mut Criterion) {
     let data = corpus();
     let icu = CodePointMapData::<GeneralCategory>::new();
@@ -175,5 +199,5 @@ fn bench_script(c: &mut Criterion) {
     });
 }
 
-criterion_group!(benches, bench_gc, bench_script);
+criterion_group!(benches, bench_empty, bench_gc, bench_script);
 criterion_main!(benches);
