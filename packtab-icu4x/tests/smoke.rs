@@ -1,8 +1,11 @@
 use icu_codepointtrie_builder::CodePointTrieBuilder;
 use icu_collections::codepointtrie::{CodePointTrie, TrieType};
+use icu_properties::CodePointMapData;
 use packtab_icu4x::{
-    flatten_code_point_trie, generate_rust_code, generate_rust_code_from_trie, GenerateError,
-    GenerateOptions, PackedCodePointTrieInput, UNICODE_LEN,
+    flatten_code_point_map_data, flatten_code_point_map_data_borrowed, flatten_code_point_trie,
+    generate_rust_code, generate_rust_code_from_code_point_map_data,
+    generate_rust_code_from_code_point_map_data_borrowed, generate_rust_code_from_trie,
+    GenerateError, GenerateOptions, PackedCodePointTrieInput, UNICODE_LEN,
 };
 
 fn sample_trie(default_value: u8, error_value: u8) -> CodePointTrie<'static, u8> {
@@ -19,6 +22,10 @@ fn edge_trie(default_value: u16, error_value: u16) -> CodePointTrie<'static, u16
     builder.set_value(char::MAX as u32, 2);
     builder.set_range_value(0x80..=0x8F, 3);
     builder.build()
+}
+
+fn sample_map(default_value: u8, error_value: u8) -> CodePointMapData<u8> {
+    CodePointMapData::from_code_point_trie(sample_trie(default_value, error_value))
 }
 
 #[test]
@@ -91,6 +98,47 @@ fn generation_respects_explicit_default_value() {
         unsafe_access: false,
     };
     let code = generate_rust_code(&packed, options).unwrap();
+
+    assert!(code.contains("fn lookup(cp: u32) -> u8"));
+    assert!(code.contains("250 as u8"));
+}
+
+#[test]
+fn owned_code_point_map_data_flattens_like_trie() {
+    let trie = sample_trie(9, 250);
+    let map = sample_map(9, 250);
+
+    assert_eq!(flatten_code_point_map_data(&map), flatten_code_point_trie(&trie));
+}
+
+#[test]
+fn borrowed_code_point_map_data_flattens_like_owned() {
+    let map = sample_map(9, 250);
+
+    assert_eq!(
+        flatten_code_point_map_data_borrowed(map.as_borrowed()),
+        flatten_code_point_map_data(&map)
+    );
+}
+
+#[test]
+fn generation_from_owned_code_point_map_data_works() {
+    let map = sample_map(9, 250);
+    let code = generate_rust_code_from_code_point_map_data(&map, GenerateOptions::new("lookup"))
+        .unwrap();
+
+    assert!(code.contains("fn lookup(cp: u32) -> u8"));
+    assert!(code.contains("250 as u8"));
+}
+
+#[test]
+fn generation_from_borrowed_code_point_map_data_works() {
+    let map = sample_map(9, 250);
+    let code = generate_rust_code_from_code_point_map_data_borrowed(
+        map.as_borrowed(),
+        GenerateOptions::new("lookup"),
+    )
+    .unwrap();
 
     assert!(code.contains("fn lookup(cp: u32) -> u8"));
     assert!(code.contains("250 as u8"));
