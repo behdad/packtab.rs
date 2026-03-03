@@ -1,5 +1,8 @@
 //! ICU4X-oriented adapters and experiments built on top of `packtab`.
 
+#[cfg(feature = "compiled_data")]
+pub mod compiled_data;
+
 use icu_collections::codepointtrie::{CodePointTrie, TrieValue};
 use icu_properties::{CodePointMapData, CodePointMapDataBorrowed};
 use packtab::codegen::Language;
@@ -65,6 +68,8 @@ impl std::error::Error for GenerateError {}
 pub trait PacktabValue: Copy + 'static {
     fn try_to_i64(self) -> Result<i64, GenerateError>;
     fn rust_type_name() -> Result<&'static str, GenerateError>;
+    fn render_literal(value: i64) -> Result<String, GenerateError>;
+    fn render_expr(expr: &str) -> Result<String, GenerateError>;
 }
 
 macro_rules! impl_packtab_value {
@@ -76,6 +81,14 @@ macro_rules! impl_packtab_value {
 
             fn rust_type_name() -> Result<&'static str, GenerateError> {
                 Ok($rust_name)
+            }
+
+            fn render_literal(value: i64) -> Result<String, GenerateError> {
+                Ok(format!("{value} as {}", $rust_name))
+            }
+
+            fn render_expr(expr: &str) -> Result<String, GenerateError> {
+                Ok(format!("{expr} as {}", $rust_name))
             }
         }
     };
@@ -96,6 +109,14 @@ impl PacktabValue for char {
     fn rust_type_name() -> Result<&'static str, GenerateError> {
         Ok("char")
     }
+
+    fn render_literal(value: i64) -> Result<String, GenerateError> {
+        Ok(format!("char::from_u32({value}u32).unwrap()"))
+    }
+
+    fn render_expr(expr: &str) -> Result<String, GenerateError> {
+        Ok(format!("char::from_u32(({expr}) as u32).unwrap()"))
+    }
 }
 
 impl PacktabValue for u64 {
@@ -106,7 +127,71 @@ impl PacktabValue for u64 {
     fn rust_type_name() -> Result<&'static str, GenerateError> {
         Err(GenerateError::UnsupportedType("u64"))
     }
+
+    fn render_literal(_value: i64) -> Result<String, GenerateError> {
+        Err(GenerateError::UnsupportedType("u64"))
+    }
+
+    fn render_expr(_expr: &str) -> Result<String, GenerateError> {
+        Err(GenerateError::UnsupportedType("u64"))
+    }
 }
+
+#[cfg(feature = "compiled_data")]
+macro_rules! impl_packtab_value_via_to_u32 {
+    ($ty:ty, $rust_name:literal, $inner_ty:literal) => {
+        impl PacktabValue for $ty {
+            fn try_to_i64(self) -> Result<i64, GenerateError> {
+                Ok(self.to_u32() as i64)
+            }
+
+            fn rust_type_name() -> Result<&'static str, GenerateError> {
+                Ok($rust_name)
+            }
+
+            fn render_literal(value: i64) -> Result<String, GenerateError> {
+                Ok(format!("{}::from_icu4c_value({value} as {})", $rust_name, $inner_ty))
+            }
+
+            fn render_expr(expr: &str) -> Result<String, GenerateError> {
+                Ok(format!("{}::from_icu4c_value(({expr}) as {})", $rust_name, $inner_ty))
+            }
+        }
+    };
+}
+
+#[cfg(feature = "compiled_data")]
+impl_packtab_value_via_to_u32!(
+    icu_properties::props::BidiClass,
+    "icu_properties::props::BidiClass",
+    "u8"
+);
+#[cfg(feature = "compiled_data")]
+impl_packtab_value_via_to_u32!(
+    icu_properties::props::CanonicalCombiningClass,
+    "icu_properties::props::CanonicalCombiningClass",
+    "u8"
+);
+#[cfg(feature = "compiled_data")]
+impl_packtab_value_via_to_u32!(
+    icu_properties::props::EastAsianWidth,
+    "icu_properties::props::EastAsianWidth",
+    "u8"
+);
+#[cfg(feature = "compiled_data")]
+impl_packtab_value_via_to_u32!(
+    icu_properties::props::GeneralCategory,
+    "icu_properties::props::GeneralCategory",
+    "u8"
+);
+#[cfg(feature = "compiled_data")]
+impl_packtab_value_via_to_u32!(
+    icu_properties::props::LineBreak,
+    "icu_properties::props::LineBreak",
+    "u8"
+);
+#[cfg(feature = "compiled_data")]
+impl_packtab_value_via_to_u32!(icu_properties::props::Script, "icu_properties::props::Script", "u16");
 
 /// Flatten an ICU4X `CodePointTrie` into dense scalar data for `packtab`.
 pub fn flatten_code_point_trie<T>(trie: &CodePointTrie<'_, T>) -> PackedCodePointTrieInput<T>
@@ -186,6 +271,8 @@ where
         .collect::<Result<_, _>>()?;
     let error_value = input.error_value.try_to_i64()?;
     let return_type = T::rust_type_name()?;
+    let error_literal = T::render_literal(error_value)?;
+    let wrapped_lookup_expr = T::render_expr(&format!("{}_get(cp as usize)", namespace))?;
     let (info, best) = packtab::pack_table(&scalar_data, options.default_value, options.compression);
     let mut code = packtab::generate(
         &info,
@@ -198,18 +285,16 @@ where
 
     let wrapper = if error_value == info.default {
         format!(
-            "#[allow(dead_code)]\n#[inline]\npub(crate) fn {}(cp: u32) -> {} {{\n  {}_get(cp as usize)\n}}\n",
-            options.name, return_type, namespace
+            "#[allow(dead_code)]\n#[inline]\npub(crate) fn {}(cp: u32) -> {} {{\n  {}\n}}\n",
+            options.name, return_type, wrapped_lookup_expr
         )
     } else {
         format!(
-            "#[allow(dead_code)]\n#[inline]\npub(crate) fn {}(cp: u32) -> {} {{\n  if cp > 0x10ffff {{\n    {} as {}\n  }} else {{\n    {}_get(cp as usize) as {}\n  }}\n}}\n",
+            "#[allow(dead_code)]\n#[inline]\npub(crate) fn {}(cp: u32) -> {} {{\n  if cp > 0x10ffff {{\n    {}\n  }} else {{\n    {}\n  }}\n}}\n",
             options.name,
             return_type,
-            error_value,
-            return_type,
-            namespace,
-            return_type,
+            error_literal,
+            wrapped_lookup_expr,
         )
     };
 

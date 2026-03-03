@@ -4,6 +4,10 @@ version = "0.1.0"
 edition = "2021"
 publish = false
 
+[features]
+default = []
+compiled_data = ["icu_properties/compiled_data"]
+
 [dependencies]
 icu_collections = { path = "/Users/behdad/icu4x/components/collections" }
 icu_properties = { path = "/Users/behdad/icu4x/components/properties", default-features = false }
@@ -12,3 +16,8 @@ packtab = { path = "../packtab" }
 [dev-dependencies]
 icu_codepointtrie_builder = { path = "/Users/behdad/icu4x/components/collections/codepointtrie_builder" }
 tempfile = "3"
+
+[[bin]]
+name = "packtab-icu4x-gen"
+path = "src/bin/packtab-icu4x-gen.rs"
+required-features = ["compiled_data"]
