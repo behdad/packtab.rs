@@ -1,0 +1,12 @@
+[package]
+name = "packtab-icu4x"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+icu_collections = { path = "/Users/behdad/icu4x/components/collections" }
+packtab = { path = "../packtab" }
+
+[dev-dependencies]
+icu_codepointtrie_builder = { path = "/Users/behdad/icu4x/components/collections/codepointtrie_builder" }
