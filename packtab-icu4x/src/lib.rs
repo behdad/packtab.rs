@@ -193,3 +193,55 @@ where
     let input = flatten_code_point_trie(trie);
     generate_rust_code(&input, options)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{generate_rust_code, GenerateError, GenerateOptions, PackedCodePointTrieInput, PacktabValue};
+
+    #[test]
+    fn generate_rust_code_uses_explicit_default_override() {
+        let input = PackedCodePointTrieInput {
+            scalar_data: vec![7u8, 1, 2, 7],
+            error_value: 99u8,
+        };
+        let options = GenerateOptions {
+            name: "lookup",
+            compression: 1.0,
+            default_value: Some(7),
+            unsafe_access: false,
+        };
+        let code = generate_rust_code(&input, options).unwrap();
+
+        assert!(code.contains("fn lookup(cp: u32) -> u8"));
+        assert!(code.contains("99 as u8"));
+    }
+
+    #[test]
+    fn generate_rust_code_uses_original_value_type_in_wrapper() {
+        let input = PackedCodePointTrieInput {
+            scalar_data: vec![0u16, 1, 2, 0],
+            error_value: 500u16,
+        };
+        let code = generate_rust_code(&input, GenerateOptions::new("lookup")).unwrap();
+
+        assert!(code.contains("fn lookup(cp: u32) -> u16"));
+        assert!(code.contains("500 as u16"));
+    }
+
+    #[test]
+    fn packtab_value_reports_char_type_name() {
+        assert_eq!(<char as PacktabValue>::rust_type_name().unwrap(), "char");
+    }
+
+    #[test]
+    fn packtab_value_rejects_u64() {
+        assert_eq!(
+            <u64 as PacktabValue>::rust_type_name(),
+            Err(GenerateError::UnsupportedType("u64"))
+        );
+        assert_eq!(
+            42u64.try_to_i64(),
+            Err(GenerateError::UnsupportedType("u64"))
+        );
+    }
+}
