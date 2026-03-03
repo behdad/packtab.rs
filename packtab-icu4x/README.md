@@ -51,6 +51,7 @@ cargo bench -p packtab-icu4x --features compiled_data --bench properties
 
 The benchmark currently compares:
 
+- empty loop baselines
 - ICU4X baseline
 - `packtab` at compression `1`
 - `packtab` at compression `5`
@@ -70,6 +71,8 @@ Release-mode Criterion run on this machine:
 
 | Benchmark | Time |
 |---|---:|
+| `empty/xor-cp` | `70.676..70.904 ns` |
+| `empty/xor-black-box-cp` | `649.21..653.46 ns` |
 | `gc/icu4x` | `3.8399..3.8602 us` |
 | `gc/packtab` | `2.0201..2.0222 us` |
 | `gc/packtab-unsafe` | `1.7228..1.7426 us` |
@@ -77,13 +80,13 @@ Release-mode Criterion run on this machine:
 | `gc/packtab-c5-unsafe` | `2.7991..2.8095 us` |
 | `gc/packtab-c9` | `3.2678..3.2835 us` |
 | `gc/packtab-c9-unsafe` | `2.8355..2.9170 us` |
-| `script/icu4x` | `3.5873..3.9311 us` |
-| `script/packtab` | `1.3079..1.3140 us` |
-| `script/packtab-unsafe` | `1.2227..1.2252 us` |
-| `script/packtab-c5` | `2.5285..2.5449 us` |
-| `script/packtab-c5-unsafe` | `1.9985..2.0012 us` |
-| `script/packtab-c9` | `3.0288..3.0412 us` |
-| `script/packtab-c9-unsafe` | `2.5119..2.5290 us` |
+| `script/icu4x` | `3.7026..3.7193 us` |
+| `script/packtab` | `1.3136..1.3201 us` |
+| `script/packtab-unsafe` | `1.2250..1.2307 us` |
+| `script/packtab-c5` | `2.5525..2.5550 us` |
+| `script/packtab-c5-unsafe` | `2.0138..2.0279 us` |
+| `script/packtab-c9` | `3.0107..3.0266 us` |
+| `script/packtab-c9-unsafe` | `2.5198..2.5368 us` |
 
 Takeaways from this run:
 
@@ -91,6 +94,25 @@ Takeaways from this run:
 - `unsafe` improves the `packtab` path further
 - compression `5` and `9` trade speed away for size
 - on these two properties, compression `5` and `9` are very close for `gc`; for `script`, `9` is smaller but slower than `5`
+
+Using `empty/xor-black-box-cp` as the runtime baseline, approximate lookup-overhead deltas are:
+
+- `gc`:
+  - ICU4X: about `3.20 us`
+  - packtab c1: about `1.38 us`
+  - packtab c5: about `2.61 us`
+  - packtab c9: about `2.61 us`
+- `script`:
+  - ICU4X: about `3.05 us`
+  - packtab c1: about `0.66 us`
+  - packtab c5: about `1.90 us`
+  - packtab c9: about `2.37 us`
+
+That matches the size story well:
+
+- `c1` is the fast-but-larger point
+- `c5` and `c9` are the size-oriented points
+- `script c9` is the smallest measured size point, but `script c5` is the better middle ground on speed
 
 ## Binary Size Measurement
 
