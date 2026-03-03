@@ -13,6 +13,12 @@ fn usage(program: &str) -> String {
 fn main() {
     let mut args = env::args();
     let program = args.next().unwrap_or_else(|| "packtab-icu4x-gen".to_string());
+    let mut args: Vec<String> = args.collect();
+    if args.first().is_some_and(|arg| arg == "--") {
+        args.remove(0);
+    }
+    let mut args = args.into_iter();
+
     let property = match args.next() {
         Some(value) => value,
         None => {
