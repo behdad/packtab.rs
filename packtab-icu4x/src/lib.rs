@@ -6,6 +6,8 @@ pub mod compiled_data;
 use icu_collections::codepointtrie::{CodePointTrie, TrieValue};
 use icu_properties::{CodePointMapData, CodePointMapDataBorrowed};
 use packtab::codegen::Language;
+
+const WRAPPER_ALLOW: &str = "#[allow(dead_code, missing_docs, trivial_numeric_casts, clippy::allow_attributes_without_reason, clippy::unseparated_literal_suffix, clippy::unnecessary_cast)]";
 use std::fmt;
 
 /// Highest valid Unicode scalar value.
@@ -321,12 +323,12 @@ where
 
     let wrapper = if error_value == info.default {
         format!(
-            "#[allow(dead_code)]\n#[inline]\npub(crate) fn {}(cp: u32) -> {} {{\n  {}\n}}\n",
+            "{WRAPPER_ALLOW}\n#[inline]\npub(crate) fn {}(cp: u32) -> {} {{\n  {}\n}}\n",
             options.name, return_type, wrapped_lookup_expr
         )
     } else {
         format!(
-            "#[allow(dead_code)]\n#[inline]\npub(crate) fn {}(cp: u32) -> {} {{\n  if cp > 0x10ffff {{\n    {}\n  }} else {{\n    {}\n  }}\n}}\n",
+            "{WRAPPER_ALLOW}\n#[inline]\npub(crate) fn {}(cp: u32) -> {} {{\n  if cp > 0x10ffff {{\n    {}\n  }} else {{\n    {}\n  }}\n}}\n",
             options.name,
             return_type,
             error_literal,

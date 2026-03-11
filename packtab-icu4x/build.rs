@@ -6,6 +6,8 @@ use std::env;
 use std::fs;
 use std::path::PathBuf;
 
+const WRAPPER_ALLOW: &str = "#[allow(dead_code, missing_docs, trivial_numeric_casts, clippy::allow_attributes_without_reason, clippy::unseparated_literal_suffix, clippy::unnecessary_cast)]";
+
 fn generate_for_property<T>(
     name: &str,
     map: icu_properties::CodePointMapDataBorrowed<'static, T>,
@@ -34,7 +36,7 @@ where
         Language::Rust { unsafe_access },
     );
     let wrapper = format!(
-        "#[allow(dead_code)]\n#[inline]\npub(crate) fn {name}(cp: u32) -> u32 {{\n  if cp > 0x10ffff {{\n    {error_value}u32\n  }} else {{\n    {name}_packtab_get(cp as usize) as u32\n  }}\n}}\n"
+        "{WRAPPER_ALLOW}\n#[inline]\npub(crate) fn {name}(cp: u32) -> u32 {{\n  if cp > 0x10ffff {{\n    {error_value}u32\n  }} else {{\n    {name}_packtab_get(cp as usize) as u32\n  }}\n}}\n"
     );
     format!("{inner}\n{wrapper}")
 }

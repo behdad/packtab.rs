@@ -59,7 +59,7 @@ fn compile_and_run_rust(rs_code: &str, data: &[i64], default: i64) {
     }
 
     let full = format!(
-        "#[allow(dead_code, unused_parens)]\n\n{}\nfn main() {{\n{}    println!(\"PASS\");\n}}\n",
+        "{}\nfn main() {{\n{}    println!(\"PASS\");\n}}\n",
         rs_code, checks
     );
 

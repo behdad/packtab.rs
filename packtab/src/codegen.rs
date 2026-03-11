@@ -14,7 +14,44 @@ impl Language {
     fn is_rust(self) -> bool {
         matches!(self, Language::Rust { .. })
     }
+}
 
+fn push_allow_attr(out: &mut String, lints: &[&str]) {
+    out.push_str("#[allow(");
+    out.push_str(&lints.join(", "));
+    out.push_str(")]\n");
+}
+
+fn rust_array_lints(private: bool) -> Vec<&'static str> {
+    let mut lints = vec![
+        "dead_code",
+        "non_upper_case_globals",
+        "clippy::allow_attributes_without_reason",
+    ];
+    if !private {
+        lints.push("missing_docs");
+    }
+    lints
+}
+
+fn rust_function_lints(private: bool, unsafe_access: bool) -> Vec<&'static str> {
+    let mut lints = vec![
+        "dead_code",
+        "unused_parens",
+        "trivial_numeric_casts",
+        "clippy::allow_attributes_without_reason",
+        "clippy::unseparated_literal_suffix",
+        "clippy::double_parens",
+        "clippy::unnecessary_cast",
+    ];
+    if unsafe_access {
+        lints.push("unsafe_code");
+        lints.push("unused_unsafe");
+    }
+    if !private {
+        lints.push("missing_docs");
+    }
+    lints
 }
 
 fn inner_shape_terms(sol_idx: usize, chain: &InnerLayerChain) -> Vec<String> {
@@ -635,7 +672,7 @@ fn render_array(out: &mut String, arr: &ArrayDecl, lang: Language) {
             out.push_str(" =\n{\n");
         }
         Language::Rust { .. } => {
-            out.push_str("#[allow(dead_code, non_upper_case_globals)]\n");
+            push_allow_attr(out, &rust_array_lints(arr.private));
             let linkage = if arr.private { "static" } else { "pub(crate) static" };
             let typ = rust_type_name(arr.typ);
             out.push_str(&format!("{} {}: [{}; {}]", linkage, arr.name, typ, arr.values.len()));
@@ -687,11 +724,7 @@ fn render_accessor(out: &mut String, acc: &AccessorDecl, lang: Language) {
             out.push_str("}\n");
         }
         Language::Rust { unsafe_access } => {
-            if unsafe_access {
-                out.push_str("#[allow(dead_code, unused_parens, unused_unsafe)]\n");
-            } else {
-                out.push_str("#[allow(dead_code, unused_parens)]\n");
-            }
+            push_allow_attr(out, &rust_function_lints(true, unsafe_access));
             if acc.inline_always {
                 out.push_str("#[inline(always)]\n");
             } else {
@@ -737,11 +770,7 @@ fn render_function(out: &mut String, func: &FuncDecl, lang: Language) {
             out.push_str("}\n");
         }
         Language::Rust { unsafe_access } => {
-            if unsafe_access {
-                out.push_str("#[allow(dead_code, unused_parens, unused_unsafe)]\n");
-            } else {
-                out.push_str("#[allow(dead_code, unused_parens)]\n");
-            }
+            push_allow_attr(out, &rust_function_lints(func.private, unsafe_access));
             if func.inline_always {
                 out.push_str("#[inline(always)]\n");
             } else {
