@@ -247,13 +247,13 @@ fn print_analysis(data: &[i64], default: Option<i64>, compression: f64) {
             f64::INFINITY
         };
         let full_cost = sol.full_cost();
-        let score = if full_cost > 0 {
-            sol.n_lookups() as f64 + compression * ((full_cost as u64).ilog2() as f64)
-        } else {
-            sol.n_lookups() as f64 - compression
-        };
+        // Use the same score pick_solution uses for 1..9 (exact log2, not floor
+        // via ilog2), so the highlighted "Best solution" matches the minimum-score
+        // row. Two decimals make the ranking visibly consistent.
+        let score = sol.n_lookups() as f64
+            + compression * if full_cost > 0 { (full_cost as f64).log2() } else { 0.0 };
         println!(
-            "{:<3} {:<8} {:<9} {:<6} {:<8} {:>6.2}x {:>7.1}",
+            "{:<3} {:<8} {:<9} {:<6} {:<8} {:>6.2}x {:>8.2}",
             i + 1,
             sol.n_lookups(),
             sol.n_extra_ops(),
