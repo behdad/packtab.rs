@@ -565,7 +565,7 @@ fn gen_palette_outer_code(
     let pal_min = *palette.iter().min().unwrap();
     let pal_max = *palette.iter().max().unwrap();
     let palette_typ = IntType::for_range(pal_min, pal_max);
-    let (palette_name, _) = code_builder.add_array(palette_typ, "palette", palette);
+    let (palette_name, palette_start) = code_builder.add_array(palette_typ, "palette", palette);
 
     // Generate the index lookup expression from the palette inner chain.
     let palette_inner = outer_info.palette_inner.as_ref().unwrap();
@@ -579,7 +579,15 @@ fn gen_palette_outer_code(
     );
 
     // Cast index to usize (required in Rust; no-op in C) and look up palette.
+    // The palette array may be shared across solutions in one CodeBuilder, so honor
+    // the start offset returned by add_array (as the data-array path does) rather
+    // than indexing from zero.
     let index_usize = as_usize(&index_expr, lang);
+    let index_usize = if palette_start > 0 {
+        format!("{}+{}", usize_literal(palette_start, lang), index_usize)
+    } else {
+        index_usize
+    };
     let mut expr = array_index(&palette_name, &index_usize, lang);
     expr = cast(&expr, ret_type, lang);
 
