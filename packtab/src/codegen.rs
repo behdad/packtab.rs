@@ -468,7 +468,13 @@ fn gen_outer_code(
     let input_var = var;
     let var = if name.is_some() { "u" } else { var };
 
-    let typ = IntType::for_range(outer_info.min_v, outer_info.max_v);
+    // The return type must also hold `default` — it is emitted in the out-of-range
+    // branch and returned for culled default-prefix indices, so a negative or
+    // oversized default would otherwise wrap (C) or fail to compile (Rust) even
+    // though the stored data fits a narrower type.
+    let lo = outer_info.min_v.min(outer_info.default);
+    let hi = outer_info.max_v.max(outer_info.default);
+    let typ = IntType::for_range(lo, hi);
     let ret_type = typ;
     let lookup_var = if outer_info.base > 0 {
         wrapping_sub(var, &usize_literal(outer_info.base, lang), lang)
@@ -541,7 +547,12 @@ fn gen_palette_outer_code(
     let input_var = var;
     let var = if name.is_some() { "u" } else { var };
 
-    let typ = IntType::for_range(outer_info.min_v, outer_info.max_v);
+    // The return type must also hold `default` (returned out-of-range / for culled
+    // default-prefix indices), so widen the range to include it — same as the
+    // direct path in `gen_outer_code`.
+    let lo = outer_info.min_v.min(outer_info.default);
+    let hi = outer_info.max_v.max(outer_info.default);
+    let typ = IntType::for_range(lo, hi);
     let ret_type = typ;
     let lookup_var = if outer_info.base > 0 {
         wrapping_sub(var, &usize_literal(outer_info.base, lang), lang)
