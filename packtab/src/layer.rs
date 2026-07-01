@@ -62,19 +62,24 @@ impl InnerLayerChain {
                 break;
             }
 
-            // Split: pad to even length, pair adjacent elements
-            // Smart padding: choose value that creates most common pair.
-            // The padded position is never accessed, so this is safe.
-            let cur = self.layers.last_mut().unwrap();
-            if cur.data.len() & 1 != 0 {
-                let last_val = cur.data[cur.data.len() - 1];
-                let padding = Self::choose_optimal_padding(&cur.data, last_val);
-                cur.data.push(padding);
+            // Split: pair adjacent elements. Pad a LOCAL copy to even length,
+            // leaving layer.data as the original array, so the flat (unsplit)
+            // solution emits exactly data.len() elements with no unreachable
+            // trailing byte (and its cost, computed from the un-padded length,
+            // matches the emission). Split solutions pair over the
+            // optimally-padded copy, so their child data — and thus all
+            // costs/picks — are unchanged. The padded position is never
+            // accessed, so the pad value is free.
+            let mut padded: Vec<i64> = self.layers.last().unwrap().data.clone();
+            if padded.len() & 1 != 0 {
+                let last_val = padded[padded.len() - 1];
+                let padding = Self::choose_optimal_padding(&padded, last_val);
+                padded.push(padding);
             }
 
             // Collect pairs with frequencies and first occurrence positions
             use std::collections::HashMap;
-            let pairs: Vec<(usize, usize)> = cur.data
+            let pairs: Vec<(usize, usize)> = padded
                 .chunks(2)
                 .map(|pair| (pair[0] as usize, pair[1] as usize))
                 .collect();
@@ -110,7 +115,7 @@ impl InnerLayerChain {
                 let id = mapping.get_or_insert(pair);
                 data2.push(id as i64);
             }
-            cur.mapping = Some(mapping);
+            self.layers.last_mut().unwrap().mapping = Some(mapping);
             data = data2;
         }
     }

@@ -937,11 +937,42 @@ fn test_odd_length_out_of_range_returns_default() {
 
 #[test]
 fn test_inner_chain_does_not_alias_outer_data() {
-    // OuterLayerInfo keeps its own `data`; the inner layer 0 owns a separate,
-    // possibly padded copy. Padding must not extend the outer bounds.
+    // OuterLayerInfo keeps its own `data`; the inner layer 0 owns a separate copy
+    // built from the reduced values. split() never pads layer.data in place, so the
+    // inner layer length always matches the outer length (no dead trailing byte).
     let info = OuterLayerInfo::new(&[1, 2, 3], 0);
     assert_eq!(info.data, vec![1, 2, 3]);
-    assert!(info.inner.layers[0].data.len() >= info.data.len());
+    assert_eq!(info.inner.layers[0].data.len(), info.data.len());
+}
+
+// ── Odd-length flat tables must not carry the split() padding byte ──
+// build_layers pads a local copy for pairing only; layer.data stays the original
+// array, so the flat (unsplit) solution emits exactly len(data) elements.
+#[test]
+fn test_inner_layer_data_stays_unpadded() {
+    let chain = InnerLayerChain::new(vec![1, 2, 3]);
+    assert_eq!(chain.layers[0].data, vec![1, 2, 3]);
+}
+
+#[test]
+fn test_odd_length_flat_has_no_dead_byte() {
+    // 9 distinct bytes stay flat (splitting doesn't help); the emitted array must
+    // have exactly 9 elements, not a padded 10.
+    let data = vec![10i64, 20, 30, 40, 50, 60, 70, 80, 90];
+    let (info, best) = pack_table(&data, Some(0), 10.0);
+    let code = generate(&info, best, "data", Language::C);
+    assert!(
+        code.contains(&format!("data_u8[{}]", data.len())),
+        "flat array should have exactly {} elements:\n{}",
+        data.len(),
+        code
+    );
+    assert!(
+        !code.contains(&format!("data_u8[{}]", data.len() + 1)),
+        "flat array must not carry a dead padding byte:\n{}",
+        code
+    );
+    compile_and_run_c(&code, &data, 0);
 }
 
 // ── F1: compression >= 10 must reach the true minimum-byte solution ──
