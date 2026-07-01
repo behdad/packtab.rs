@@ -583,20 +583,32 @@ fn test_palette_cost_calculation() {
 
 #[test]
 fn test_palette_in_pareto_frontier() {
-    // All returned solutions must be mutually non-dominated.
+    // Every returned solution is minimal on the full_cost OR the cost axis.
+    //
+    // The frontier is the union of the (n_lookups, full_cost) frontier (navigated
+    // by compression 1..9) and the (n_lookups, cost) frontier (needed for
+    // compression >= 10 to reach the true minimum bytes).  A solution may be
+    // full_cost-dominated yet still belong, provided it is cost-minimal for its
+    // lookup count; what must never happen is a fully redundant solution —
+    // dominated on both axes.
     let data = vec![1i64, 2, 3, 2, 3, 2, 1, 0, 2, 1, 2, 2, 3, 3, 1, 11110124];
     let info = pack_table_all(&data, Some(0));
 
-    for a in &info.solutions {
-        for b in &info.solutions {
-            if std::ptr::eq(a, b) {
-                continue;
-            }
-            assert!(
-                !(a.n_lookups() <= b.n_lookups() && a.full_cost() <= b.full_cost()),
-                "Found dominated solution in Pareto frontier"
-            );
-        }
+    for s in &info.solutions {
+        let peers: Vec<_> = info
+            .solutions
+            .iter()
+            .filter(|t| t.n_lookups() <= s.n_lookups())
+            .collect();
+        let on_fullcost = s.full_cost() <= peers.iter().map(|t| t.full_cost()).min().unwrap();
+        let on_cost = s.cost() <= peers.iter().map(|t| t.cost()).min().unwrap();
+        assert!(
+            on_fullcost || on_cost,
+            "redundant solution (nl={}, fc={}, cost={})",
+            s.n_lookups(),
+            s.full_cost(),
+            s.cost()
+        );
     }
 }
 
