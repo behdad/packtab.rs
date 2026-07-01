@@ -324,7 +324,13 @@ fn gen_inner_code(
     data = combine(data, layer.unit_bits);
 
     // Check if we can inline as a constant.
-    let can_inline = data.len() * 8 <= 64 && data.iter().all(|&v| v >= 0);
+    //
+    // `data` holds packed bytes when unit_bits < 8 (see `combine`), but holds
+    // unit_bits-wide elements when unit_bits >= 8.  Inlining packs each element at
+    // `elem_bits` stride and must match the extraction stride below, so use the
+    // element width — not a hardcoded 8 — for both the fit check and the packing.
+    let elem_bits = if unit_bits >= 8 { unit_bits as usize } else { 8 };
+    let can_inline = data.len() * elem_bits <= 64 && data.iter().all(|&v| v >= 0);
 
     let arr_name: String;
     let start: usize;
@@ -369,10 +375,12 @@ fn gen_inner_code(
     if can_inline {
         let mut packed: u64 = 0;
         for (i, &b) in data.iter().enumerate() {
-            packed |= (b as u64) << (i * 8);
+            packed |= (b as u64) << (i * elem_bits);
         }
-        let total_bits = data.len() * 8;
-        let const_typ = if total_bits >= 64 {
+        let total_bits = data.len() * elem_bits;
+        // Any total_bits > 32 needs U64; capping the shift at 32 also avoids the
+        // `1i64 << total_bits` overflow that a 63-bit constant would otherwise hit.
+        let const_typ = if total_bits > 32 {
             IntType::U64
         } else {
             IntType::for_range(0, (1i64 << total_bits) - 1)
