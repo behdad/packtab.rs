@@ -79,7 +79,7 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-packtab = "1.8.0"
+packtab = "1.9.0"
 ```
 
 Example:
@@ -99,7 +99,7 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-packtab-macro = "1.8.0"
+packtab-macro = "1.9.0"
 ```
 
 Example:
