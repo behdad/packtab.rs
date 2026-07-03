@@ -324,7 +324,13 @@ fn gen_inner_code(
     data = combine(data, layer.unit_bits);
 
     // Check if we can inline as a constant.
-    let can_inline = data.len() * 8 <= 64 && data.iter().all(|&v| v >= 0);
+    //
+    // `data` holds packed bytes when unit_bits < 8 (see `combine`), but holds
+    // unit_bits-wide elements when unit_bits >= 8.  Inlining packs each element at
+    // `elem_bits` stride and must match the extraction stride below, so use the
+    // element width — not a hardcoded 8 — for both the fit check and the packing.
+    let elem_bits = if unit_bits >= 8 { unit_bits as usize } else { 8 };
+    let can_inline = data.len() * elem_bits <= 64 && data.iter().all(|&v| v >= 0);
 
     let arr_name: String;
     let start: usize;
@@ -369,10 +375,12 @@ fn gen_inner_code(
     if can_inline {
         let mut packed: u64 = 0;
         for (i, &b) in data.iter().enumerate() {
-            packed |= (b as u64) << (i * 8);
+            packed |= (b as u64) << (i * elem_bits);
         }
-        let total_bits = data.len() * 8;
-        let const_typ = if total_bits >= 64 {
+        let total_bits = data.len() * elem_bits;
+        // Any total_bits > 32 needs U64; capping the shift at 32 also avoids the
+        // `1i64 << total_bits` overflow that a 63-bit constant would otherwise hit.
+        let const_typ = if total_bits > 32 {
             IntType::U64
         } else {
             IntType::for_range(0, (1i64 << total_bits) - 1)
@@ -460,7 +468,13 @@ fn gen_outer_code(
     let input_var = var;
     let var = if name.is_some() { "u" } else { var };
 
-    let typ = IntType::for_range(outer_info.min_v, outer_info.max_v);
+    // The return type must also hold `default` — it is emitted in the out-of-range
+    // branch and returned for culled default-prefix indices, so a negative or
+    // oversized default would otherwise wrap (C) or fail to compile (Rust) even
+    // though the stored data fits a narrower type.
+    let lo = outer_info.min_v.min(outer_info.default);
+    let hi = outer_info.max_v.max(outer_info.default);
+    let typ = IntType::for_range(lo, hi);
     let ret_type = typ;
     let lookup_var = if outer_info.base > 0 {
         wrapping_sub(var, &usize_literal(outer_info.base, lang), lang)
@@ -533,7 +547,12 @@ fn gen_palette_outer_code(
     let input_var = var;
     let var = if name.is_some() { "u" } else { var };
 
-    let typ = IntType::for_range(outer_info.min_v, outer_info.max_v);
+    // The return type must also hold `default` (returned out-of-range / for culled
+    // default-prefix indices), so widen the range to include it — same as the
+    // direct path in `gen_outer_code`.
+    let lo = outer_info.min_v.min(outer_info.default);
+    let hi = outer_info.max_v.max(outer_info.default);
+    let typ = IntType::for_range(lo, hi);
     let ret_type = typ;
     let lookup_var = if outer_info.base > 0 {
         wrapping_sub(var, &usize_literal(outer_info.base, lang), lang)
@@ -546,7 +565,7 @@ fn gen_palette_outer_code(
     let pal_min = *palette.iter().min().unwrap();
     let pal_max = *palette.iter().max().unwrap();
     let palette_typ = IntType::for_range(pal_min, pal_max);
-    let (palette_name, _) = code_builder.add_array(palette_typ, "palette", palette);
+    let (palette_name, palette_start) = code_builder.add_array(palette_typ, "palette", palette);
 
     // Generate the index lookup expression from the palette inner chain.
     let palette_inner = outer_info.palette_inner.as_ref().unwrap();
@@ -560,7 +579,15 @@ fn gen_palette_outer_code(
     );
 
     // Cast index to usize (required in Rust; no-op in C) and look up palette.
+    // The palette array may be shared across solutions in one CodeBuilder, so honor
+    // the start offset returned by add_array (as the data-array path does) rather
+    // than indexing from zero.
     let index_usize = as_usize(&index_expr, lang);
+    let index_usize = if palette_start > 0 {
+        format!("{}+{}", usize_literal(palette_start, lang), index_usize)
+    } else {
+        index_usize
+    };
     let mut expr = array_index(&palette_name, &index_usize, lang);
     expr = cast(&expr, ret_type, lang);
 

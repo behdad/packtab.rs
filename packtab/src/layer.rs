@@ -62,19 +62,24 @@ impl InnerLayerChain {
                 break;
             }
 
-            // Split: pad to even length, pair adjacent elements
-            // Smart padding: choose value that creates most common pair.
-            // The padded position is never accessed, so this is safe.
-            let cur = self.layers.last_mut().unwrap();
-            if cur.data.len() & 1 != 0 {
-                let last_val = cur.data[cur.data.len() - 1];
-                let padding = Self::choose_optimal_padding(&cur.data, last_val);
-                cur.data.push(padding);
+            // Split: pair adjacent elements. Pad a LOCAL copy to even length,
+            // leaving layer.data as the original array, so the flat (unsplit)
+            // solution emits exactly data.len() elements with no unreachable
+            // trailing byte (and its cost, computed from the un-padded length,
+            // matches the emission). Split solutions pair over the
+            // optimally-padded copy, so their child data — and thus all
+            // costs/picks — are unchanged. The padded position is never
+            // accessed, so the pad value is free.
+            let mut padded: Vec<i64> = self.layers.last().unwrap().data.clone();
+            if padded.len() & 1 != 0 {
+                let last_val = padded[padded.len() - 1];
+                let padding = Self::choose_optimal_padding(&padded, last_val);
+                padded.push(padding);
             }
 
             // Collect pairs with frequencies and first occurrence positions
             use std::collections::HashMap;
-            let pairs: Vec<(usize, usize)> = cur.data
+            let pairs: Vec<(usize, usize)> = padded
                 .chunks(2)
                 .map(|pair| (pair[0] as usize, pair[1] as usize))
                 .collect();
@@ -110,7 +115,7 @@ impl InnerLayerChain {
                 let id = mapping.get_or_insert(pair);
                 data2.push(id as i64);
             }
-            cur.mapping = Some(mapping);
+            self.layers.last_mut().unwrap().mapping = Some(mapping);
             data = data2;
         }
     }
@@ -253,24 +258,20 @@ impl InnerLayerChain {
         }
     }
 
-    /// Pareto-prune a list of solution indices.
+    /// Pareto-prune a list of solution indices, keeping the union of the
+    /// `(n_lookups, full_cost)` and `(n_lookups, cost)` frontiers.
     ///
-    /// Returns the subset of `indices` that are non-dominated: sorted by
-    /// (n_lookups, full_cost) ascending, keeping only solutions whose
-    /// full_cost strictly improves on all previously kept solutions.
+    /// Retaining the cost frontier here (not just full_cost) is what lets a
+    /// byte-minimal solution survive up through the parent layers to the root, so
+    /// the compression >= 10 selector can reach the true minimum bytes.  Keeping
+    /// more solutions is always safe: the heuristic never prefers the extra ones.
     fn pareto_prune_indices(solutions: &[InnerSolution], indices: &[usize]) -> Vec<usize> {
-        let mut sorted = indices.to_vec();
-        sorted.sort_by_key(|&i| (solutions[i].n_lookups, solutions[i].full_cost()));
-        let mut kept = Vec::new();
-        let mut best_cost = usize::MAX;
-        for i in sorted {
-            let fc = solutions[i].full_cost();
-            if fc < best_cost {
-                kept.push(i);
-                best_cost = fc;
-            }
-        }
-        kept
+        dual_frontier_indices(
+            indices,
+            |i| solutions[i].n_lookups,
+            |i| solutions[i].cost,
+            |i| solutions[i].full_cost(),
+        )
     }
 
     fn prune_solutions(&mut self) {
@@ -290,24 +291,15 @@ impl InnerLayerChain {
             .map(|(i, _)| i)
             .collect();
 
-        // Pareto pruning: sort by (nLookups, fullCost), keep non-dominated.
-        let mut indexed: Vec<(usize, usize, usize)> = root_solutions
-            .iter()
-            .map(|&i| {
-                let s = &self.solutions[i];
-                (i, s.n_lookups, s.full_cost())
-            })
-            .collect();
-        indexed.sort_by_key(|&(_, nl, fc)| (nl, fc));
-
-        let mut kept_indices = Vec::new();
-        let mut best_cost = usize::MAX;
-        for (idx, _, fc) in indexed {
-            if fc < best_cost {
-                kept_indices.push(idx);
-                best_cost = fc;
-            }
-        }
+        // Pareto pruning: keep the union of the (nLookups, fullCost) and
+        // (nLookups, cost) frontiers so byte-minimal solutions survive for the
+        // compression >= 10 selector.
+        let kept_indices = dual_frontier_indices(
+            &root_solutions,
+            |i| self.solutions[i].n_lookups,
+            |i| self.solutions[i].cost,
+            |i| self.solutions[i].full_cost(),
+        );
 
         // Mark which solutions are kept (need to keep all referenced children too).
         let mut keep = vec![false; self.solutions.len()];
@@ -418,18 +410,58 @@ impl AnyOuterSolution {
     }
 }
 
-pub(crate) fn prune_pareto_solutions(mut solutions: Vec<AnyOuterSolution>) -> Vec<AnyOuterSolution> {
-    solutions.sort_by_key(|s| (s.n_lookups(), s.full_cost()));
-    let mut kept = Vec::new();
-    let mut best_cost = usize::MAX;
-    for solution in solutions {
-        let full_cost = solution.full_cost();
-        if full_cost < best_cost {
-            kept.push(solution);
-            best_cost = full_cost;
+/// Keep the union of the `(n_lookups, full_cost)` frontier and the
+/// `(n_lookups, cost)` frontier over `candidates`, returning kept indices.
+///
+/// The size/speed heuristic (compression 1..9) navigates the full_cost frontier
+/// and is unaffected: the extra cost-frontier solutions are always full_cost-
+/// dominated, so the monotone heuristic score can never prefer them, and on an
+/// exact tie the full_cost-frontier incumbent is ordered first.  Retaining the
+/// cost frontier lets the byte-minimizing (compression >= 10) and flat
+/// (compression <= 0) selectors reach the true optimum, which pruning on
+/// full_cost alone would discard.
+fn dual_frontier_indices(
+    candidates: &[usize],
+    n_lookups: impl Fn(usize) -> usize,
+    cost: impl Fn(usize) -> usize,
+    full_cost: impl Fn(usize) -> usize,
+) -> Vec<usize> {
+    let mut seen = std::collections::HashSet::new();
+    let mut kept: Vec<usize> = Vec::new();
+
+    // Pass 0: full_cost frontier (incumbents). Pass 1: cost frontier.
+    for pass in 0..2 {
+        let key = |i: usize| if pass == 0 { full_cost(i) } else { cost(i) };
+        let mut order = candidates.to_vec();
+        order.sort_by_key(|&i| (n_lookups(i), key(i)));
+        let mut best = usize::MAX;
+        for i in order {
+            let k = key(i);
+            if k < best {
+                best = k;
+                if seen.insert(i) {
+                    kept.push(i);
+                }
+            }
         }
     }
+
+    // Stable sort keeps full_cost incumbents ahead of any cost-only tie.
+    kept.sort_by_key(|&i| (n_lookups(i), full_cost(i)));
     kept
+}
+
+pub(crate) fn prune_pareto_solutions(solutions: Vec<AnyOuterSolution>) -> Vec<AnyOuterSolution> {
+    let candidates: Vec<usize> = (0..solutions.len()).collect();
+    let kept = dual_frontier_indices(
+        &candidates,
+        |i| solutions[i].n_lookups(),
+        |i| solutions[i].cost(),
+        |i| solutions[i].full_cost(),
+    );
+    // Materialize kept solutions in frontier order (indices are unique).
+    let mut owned: Vec<Option<AnyOuterSolution>> = solutions.into_iter().map(Some).collect();
+    kept.into_iter().map(|i| owned[i].take().unwrap()).collect()
 }
 
 /// Arithmetic preprocessing result.
@@ -609,6 +641,11 @@ impl OuterLayerInfo {
             try_palette_encoding(&reduced_data, extra_ops);
         solutions.extend(palette_sols);
 
+        // Prune the combined (direct + palette) set to the union frontier, dropping
+        // solutions that are redundant — dominated on both full_cost and cost — such
+        // as an inner split beaten outright by a palette solution.
+        let solutions = prune_pareto_solutions(solutions);
+
         OuterLayerInfo {
             data,
             default,
@@ -750,23 +787,35 @@ mod tests {
         assert_eq!(lookups, sorted);
     }
 
+    /// Every root solution must be minimal on the full_cost OR the cost axis among
+    /// peers with `n_lookups <= its own` — the dual frontier the pruner keeps.  What
+    /// must never survive is a fully redundant solution: dominated on both axes.
+    fn assert_on_union_frontier(chain: &InnerLayerChain) {
+        let root_idxs = chain.root_solutions();
+        for &s in &root_idxs {
+            let ns = chain.solutions[s].n_lookups;
+            let peers: Vec<&InnerSolution> = root_idxs
+                .iter()
+                .map(|&i| &chain.solutions[i])
+                .filter(|t| t.n_lookups <= ns)
+                .collect();
+            let on_fullcost =
+                chain.solutions[s].full_cost() <= peers.iter().map(|t| t.full_cost()).min().unwrap();
+            let on_cost = chain.solutions[s].cost <= peers.iter().map(|t| t.cost).min().unwrap();
+            assert!(
+                on_fullcost || on_cost,
+                "solution (nl={}, fc={}, cost={}) is redundant (dominated on both axes)",
+                ns,
+                chain.solutions[s].full_cost(),
+                chain.solutions[s].cost,
+            );
+        }
+    }
+
     #[test]
     fn test_inner_solutions_not_dominated() {
         let chain = InnerLayerChain::new((0..256).map(|x| x as i64).collect());
-        let root_idxs = chain.root_solutions();
-        for &a in &root_idxs {
-            for &b in &root_idxs {
-                if a == b {
-                    continue;
-                }
-                let sa = &chain.solutions[a];
-                let sb = &chain.solutions[b];
-                assert!(
-                    !(sa.n_lookups <= sb.n_lookups && sa.full_cost() <= sb.full_cost()),
-                    "Found dominated solution"
-                );
-            }
-        }
+        assert_on_union_frontier(&chain);
     }
 
     #[test]
@@ -859,28 +908,11 @@ mod tests {
         );
     }
 
-    /// All root solutions for a deep chain must be Pareto-optimal.
+    /// All root solutions for a deep chain must lie on the union frontier.
     #[test]
     fn test_inner_deep_chain_pareto_optimal() {
         let chain = InnerLayerChain::new(deep_chain_data());
-        let root_idxs = chain.root_solutions();
-        for &a in &root_idxs {
-            for &b in &root_idxs {
-                if a == b {
-                    continue;
-                }
-                let sa = &chain.solutions[a];
-                let sb = &chain.solutions[b];
-                assert!(
-                    !(sa.n_lookups <= sb.n_lookups && sa.full_cost() <= sb.full_cost()),
-                    "Solution (nl={}, fc={}) dominates (nl={}, fc={})",
-                    sa.n_lookups,
-                    sa.full_cost(),
-                    sb.n_lookups,
-                    sb.full_cost()
-                );
-            }
-        }
+        assert_on_union_frontier(&chain);
     }
 
     /// Root solutions must be sorted by n_lookups ascending.
@@ -897,23 +929,14 @@ mod tests {
         assert_eq!(lookups, sorted, "Root solutions not sorted by n_lookups");
     }
 
-    /// When sorted by n_lookups, full_cost must strictly decrease
-    /// (otherwise dominated solutions would have survived pruning).
+    /// No kept root solution may be redundant (dominated on both full_cost and
+    /// cost).  With the dual frontier, two solutions can share a lookup count — one
+    /// full_cost-optimal, one cost-optimal — so full_cost no longer strictly
+    /// decreases across the sequence, but neither is ever fully dominated.
     #[test]
-    fn test_inner_deep_chain_cost_strictly_decreases() {
+    fn test_inner_deep_chain_no_redundant_solutions() {
         let chain = InnerLayerChain::new(deep_chain_data());
-        let root_idxs = chain.root_solutions();
-        let mut prev_cost = usize::MAX;
-        for &i in &root_idxs {
-            let fc = chain.solutions[i].full_cost();
-            assert!(
-                fc < prev_cost,
-                "full_cost did not strictly decrease: {} >= {}",
-                fc,
-                prev_cost
-            );
-            prev_cost = fc;
-        }
+        assert_on_union_frontier(&chain);
     }
 
     /// pick_solution must return a valid index and choose a compact solution.

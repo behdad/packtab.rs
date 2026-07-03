@@ -583,20 +583,32 @@ fn test_palette_cost_calculation() {
 
 #[test]
 fn test_palette_in_pareto_frontier() {
-    // All returned solutions must be mutually non-dominated.
+    // Every returned solution is minimal on the full_cost OR the cost axis.
+    //
+    // The frontier is the union of the (n_lookups, full_cost) frontier (navigated
+    // by compression 1..9) and the (n_lookups, cost) frontier (needed for
+    // compression >= 10 to reach the true minimum bytes).  A solution may be
+    // full_cost-dominated yet still belong, provided it is cost-minimal for its
+    // lookup count; what must never happen is a fully redundant solution —
+    // dominated on both axes.
     let data = vec![1i64, 2, 3, 2, 3, 2, 1, 0, 2, 1, 2, 2, 3, 3, 1, 11110124];
     let info = pack_table_all(&data, Some(0));
 
-    for a in &info.solutions {
-        for b in &info.solutions {
-            if std::ptr::eq(a, b) {
-                continue;
-            }
-            assert!(
-                !(a.n_lookups() <= b.n_lookups() && a.full_cost() <= b.full_cost()),
-                "Found dominated solution in Pareto frontier"
-            );
-        }
+    for s in &info.solutions {
+        let peers: Vec<_> = info
+            .solutions
+            .iter()
+            .filter(|t| t.n_lookups() <= s.n_lookups())
+            .collect();
+        let on_fullcost = s.full_cost() <= peers.iter().map(|t| t.full_cost()).min().unwrap();
+        let on_cost = s.cost() <= peers.iter().map(|t| t.cost()).min().unwrap();
+        assert!(
+            on_fullcost || on_cost,
+            "redundant solution (nl={}, fc={}, cost={})",
+            s.n_lookups(),
+            s.full_cost(),
+            s.cost()
+        );
     }
 }
 
@@ -842,4 +854,189 @@ fn test_inferred_default_considers_both_boundary_values() {
 
     assert!(inferred_costs.is_subset(&candidate_costs));
     assert!(!inferred_costs.is_empty());
+}
+
+// ── Codegen soundness regressions (port of harfbuzz/packtab PR #9) ──
+//
+// Round-trip regressions for the codegen/pruning soundness bugs found by fuzzing
+// the Python implementation. Each generates code at the default compression and
+// compiles + runs it in C and both Rust flavours; compile_and_run also asserts
+// out-of-range indices return `default`.
+
+fn roundtrip_all_langs(data: &[i64], default: i64) {
+    for lang in [
+        Language::C,
+        Language::Rust { unsafe_access: false },
+        Language::Rust { unsafe_access: true },
+    ] {
+        let code = gen(data, default, lang);
+        compile_and_run(&code, data, default, lang);
+    }
+}
+
+// ── F2: inline-constant path with >= 16-bit values ──
+// A wide value packed into the inline path used to be corrupted because the
+// packing assumed 8-bit elements. These pick the inline solution and must
+// round-trip.
+#[test]
+fn test_inline_16bit_value_roundtrips() {
+    let data = [
+        vec![0i64; 36],
+        vec![255],
+        vec![0i64; 55],
+        vec![65000, 0, 0, 255],
+        vec![0i64; 8],
+    ]
+    .concat();
+    roundtrip_all_langs(&data, 0);
+}
+
+#[test]
+fn test_inline_various_wide_values_roundtrip() {
+    for data in [
+        vec![0i64, 65000, 0, 300],
+        vec![0i64, 0, 70000, 0], // 32-bit
+        vec![5i64, 5, 5, 4000, 5, 5, 5, 5],
+    ] {
+        roundtrip_all_langs(&data, 0);
+    }
+}
+
+// ── F3: return type must hold `default` ──
+#[test]
+fn test_negative_default_roundtrips() {
+    roundtrip_all_langs(&[0, 1, 2, 3], -1);
+}
+
+#[test]
+fn test_large_default_roundtrips() {
+    roundtrip_all_langs(&[0, 1, 2, 3], 1000);
+}
+
+#[test]
+fn test_default_outside_range_constant_data() {
+    roundtrip_all_langs(&[0; 8], -5);
+}
+
+#[test]
+fn test_negative_default_culls_prefix() {
+    // The leading default value is culled by base-rebasing; the culled index must
+    // still return the (correctly typed) default.
+    roundtrip_all_langs(&[-2, 1], -2);
+}
+
+// ── F5-analog: odd-length data must not leak the split() padding ──
+// Rust always builds the inner chain from a freshly-owned Vec (never aliased to
+// the outer data), and the bounds check uses the unpadded outer length, so the
+// padding can never leak. These guard that invariant.
+#[test]
+fn test_odd_length_out_of_range_returns_default() {
+    roundtrip_all_langs(&[1, 2, 3], 0);
+    roundtrip_all_langs(&[3, 1, 4, 1, 5], 0);
+}
+
+#[test]
+fn test_inner_chain_does_not_alias_outer_data() {
+    // OuterLayerInfo keeps its own `data`; the inner layer 0 owns a separate copy
+    // built from the reduced values. split() never pads layer.data in place, so the
+    // inner layer length always matches the outer length (no dead trailing byte).
+    let info = OuterLayerInfo::new(&[1, 2, 3], 0);
+    assert_eq!(info.data, vec![1, 2, 3]);
+    assert_eq!(info.inner.layers[0].data.len(), info.data.len());
+}
+
+// ── Odd-length flat tables must not carry the split() padding byte ──
+// build_layers pads a local copy for pairing only; layer.data stays the original
+// array, so the flat (unsplit) solution emits exactly len(data) elements.
+#[test]
+fn test_inner_layer_data_stays_unpadded() {
+    let chain = InnerLayerChain::new(vec![1, 2, 3]);
+    assert_eq!(chain.layers[0].data, vec![1, 2, 3]);
+}
+
+#[test]
+fn test_odd_length_flat_has_no_dead_byte() {
+    // 9 distinct bytes stay flat (splitting doesn't help); the emitted array must
+    // have exactly 9 elements, not a padded 10.
+    let data = vec![10i64, 20, 30, 40, 50, 60, 70, 80, 90];
+    let (info, best) = pack_table(&data, Some(0), 10.0);
+    let code = generate(&info, best, "data", Language::C);
+    assert!(
+        code.contains(&format!("data_u8[{}]", data.len())),
+        "flat array should have exactly {} elements:\n{}",
+        data.len(),
+        code
+    );
+    assert!(
+        !code.contains(&format!("data_u8[{}]", data.len() + 1)),
+        "flat array must not carry a dead padding byte:\n{}",
+        code
+    );
+    compile_and_run_c(&code, &data, 0);
+}
+
+// ── F1: compression >= 10 must reach the true minimum-byte solution ──
+#[test]
+fn test_compression_10_is_global_min_bytes() {
+    let cases: Vec<Vec<i64>> = vec![
+        [
+            vec![0i64; 8],
+            vec![9999],
+            vec![0i64; 30],
+            vec![5],
+            vec![0i64; 60],
+            vec![1],
+            vec![0i64; 40],
+        ]
+        .concat(),
+        [vec![0i64; 200], vec![7], vec![0i64; 55]].concat(),
+        (0..400i64).map(|i| i % 4).collect(),
+    ];
+    for data in cases {
+        let all = pack_table_all(&data, Some(0));
+        let true_min = all.solutions.iter().map(|s| s.cost()).min().unwrap();
+        let (info, best) = pack_table(&data, Some(0), 10.0);
+        assert_eq!(
+            info.solutions[best].cost(),
+            true_min,
+            "compression>=10 did not reach global min bytes for {:?}",
+            &data[..8.min(data.len())]
+        );
+    }
+}
+
+#[test]
+fn test_compression_1to9_unchanged_by_frontier_enrichment() {
+    // The cost-frontier solutions re-admitted for compression >= 10 are always
+    // full_cost-dominated, so they must never change a 1..9 pick.
+    let data = [
+        vec![0i64; 64],
+        vec![1, 2, 3, 0, 0, 5],
+        vec![0i64; 40],
+        vec![255],
+        vec![0i64; 20],
+    ]
+    .concat();
+    let info = pack_table_all(&data, Some(0));
+    for c in 1..10 {
+        let cf = c as f64;
+        let picked = pick_solution(&info.solutions, cf);
+        let best = info
+            .solutions
+            .iter()
+            .enumerate()
+            .min_by(|(_, a), (_, b)| {
+                let sa = a.n_lookups() as f64 + cf * (a.full_cost() as f64).log2();
+                let sb = b.n_lookups() as f64 + cf * (b.full_cost() as f64).log2();
+                sa.partial_cmp(&sb).unwrap()
+            })
+            .map(|(i, _)| i)
+            .unwrap();
+        assert_eq!(
+            (info.solutions[picked].cost(), info.solutions[picked].n_lookups()),
+            (info.solutions[best].cost(), info.solutions[best].n_lookups()),
+            "compression {} pick changed",
+            c
+        );
+    }
 }
